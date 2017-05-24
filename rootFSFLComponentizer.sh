@@ -27,6 +27,7 @@ function usage()
 	echo "$name# -fc   : a 2 column tab separated file-component map file - mutually exclusive with -cf"
 	echo "$name# -cf   : a 2 column tab separated component-file map file - mutually exclusive with -fc"
 	echo "$name# -mcm  : a 2 column tab-separated macro-component / component map file"
+	echo "$name# -ca   : componentize all - make not componentized files a part of not-componentized component"
 	echo "$name# -V    : validation of the produced ouput"
 	echo "$name# -h    : display this help and exit"
 }
@@ -69,6 +70,7 @@ validate="n"
 tcFileList=
 cmFileList=
 macroCompMap=
+compAll="n"	#componentize all
 while [ "$1" != "" ]; do
 	case $1 in
 		-f ) 	shift
@@ -86,6 +88,9 @@ while [ "$1" != "" ]; do
 			;;
 		-mcm ) 	shift
 			macroCompMap=$1
+			;;
+		-ca ) 	shift
+			compAll="y"
 			;;
 		-V )	validate="y"
 			;;
@@ -142,25 +147,25 @@ rm $cmFileList.error
 
 tcFileListBN=`basename $tcFileList`
 echo "$name : Component Map File          = $cmFileList" | tee -a $name.log
+echo "$name : Componentize all            = $compAll" | tee -a $name.log
 [ "$fcol" == "1" ] && echo "$name : Component Map File type     = filename-component" | tee -a $name.log || echo "$name : Component Map File type     = component-filename" | tee -a $name.log
 
 # Main:
 startTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
-
 sort -k$tcCol $tcFileList -o $tcFileList.sorted
 sort -k$fcol,$fcol $cmFileList -o $cmFileList.sorted
 
 cat /dev/null > $tcFileListBN.fcd
 cat /dev/null > $tcFileListBN.componentized
 cat /dev/null > $tcFileListBN.not-componentized
-cat /dev/null > $tcFileListBN.componentized.components
+cat /dev/null > $tcFileListBN.componentized.tmp
 if [ $tcCol -eq 9 ] ;then
 	join -a1 -1 9 -2 $fcol $tcFileList.sorted $cmFileList.sorted | awk -v base=$tcFileListBN \
 	'{ \
 		printf "%s %s %s %s %8s %s %s %s %22s %s\n", $2, $3, $4, $5, $6, $7, $8, $9, $10, $1 >> base".fcd"; \
 		if ($10 != "") \
 		{ \
-			printf "%s\n", $10 >> base".componentized.components"; \
+			printf "%s\n", $10 >> base".componentized.tmp"; \
 			printf "%s %s %s %s %8s %s %s %s %22s %s\n", $2, $3, $4, $5, $6, $7, $8, $9, $10, $1 >> base".componentized"; \
 		} \
 		else \
@@ -172,9 +177,9 @@ else
 		printf "%22s %s\n", $2, $1 >> base".fcd"; \
 		if ($2 != "") \
 		{ \
-			printf "%s\n", $2 >> base".componentized.components"; \
+			printf "%s\n", $2 >> base".componentized.tmp"; \
 			printf "%22s %s\n", $2, $1 >> base".componentized"; \
-		} \ 
+		} \
 		else \
 			printf "%s\n", $1 >> base".not-componentized"; \
 	}'
@@ -183,23 +188,35 @@ fi
 if [ $tcCol -eq 9 ]; then
 	sort -rnk5 $tcFileListBN.componentized -o $tcFileListBN.componentized.sorted-by-size
 fi
-sort -k$tcCol $tcFileListBN.componentized -o $tcFileListBN.componentized.sorted-by-comps
+sort -k$tcCol $tcFileListBN.componentized -o $tcFileListBN.componentized.sorted-by-components
 
 rm -rf $tcFileListBN.componentized.componentization; mkdir $tcFileListBN.componentized.componentization
+[ "$compAll" == "y" ] && ln -sf "../$tcFileListBN.not-componentized" $tcFileListBN.componentized.componentization/$tcFileListBN.componentized.not-componentized
 if [ $tcCol -eq 9 ]; then
 	awk -v base=$tcFileListBN.componentized.componentization/$tcFileListBN.componentized \
-		-F "[ ]+" '{ printf "%s %s %s %s %8s %s %s %s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $10 >> base"."$9 }' $tcFileListBN.componentized.sorted-by-comps
+		-F "[ ]+" '{ printf "%s %s %s %s %8s %s %s %s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $10 >> base"."$9 }' $tcFileListBN.componentized.sorted-by-components
+	cat /dev/null > $tcFileListBN.componentized.components
+	for filename in $tcFileListBN.componentized.componentization/*; do
+		prefix=$tcFileListBN.componentized.componentization/$tcFileListBN.componentized
+		awk -v component=${filename#$prefix.} '{total += $5} END { printf "%3s\t%8s\t%s\n", NR, total, component}' ${filename} >> $tcFileListBN.componentized.components
+	done
+	sort -rnk2 $tcFileListBN.componentized.components -o $tcFileListBN.componentized.components.rnk2
 else
-	sed 's/^ *//' $tcFileListBN.componentized.sorted-by-comps | awk -v base=$tcFileListBN.componentized.componentization/$tcFileListBN.componentized \
+	sed 's/^ *//' $tcFileListBN.componentized.sorted-by-components | awk -v base=$tcFileListBN.componentized.componentization/$tcFileListBN.componentized \
 		-F "[ ]+" '{ printf "%s\n", $2 >> base"."$1 }'
+	cat /dev/null > $tcFileListBN.componentized.components
+	for filename in $tcFileListBN.componentized.componentization/*; do
+		prefix=$tcFileListBN.componentized.componentization/$tcFileListBN.componentized
+		awk -v component=${filename#$prefix.} 'END { printf "%3s\t%s\n", NR, component}' ${filename} >> $tcFileListBN.componentized.components
+	done
 fi
 
 if [ "$macroCompMap" != "" ]; then
 	cat /dev/null > $tcFileListBN.macro-componentized
 	cat /dev/null > $tcFileListBN.not-macro-componentized
 	sort -k2 $macroCompMap -o $macroCompMap.k2
-	sort -u $tcFileListBN.componentized.components -o $tcFileListBN.componentized.components
-	join -a1 -1 1 -2 2 $tcFileListBN.componentized.components $macroCompMap.k2 | awk -v base=$tcFileListBN \
+	sort -u $tcFileListBN.componentized.tmp -o $tcFileListBN.componentized.tmp
+	join -a1 -1 1 -2 2 $tcFileListBN.componentized.tmp $macroCompMap.k2 | awk -v base=$tcFileListBN \
 	'{ \
 		if ($2 != "") \
 			printf "%s\t%s\n", $1, $2 >> base".macro-componentized"; \
@@ -234,7 +251,7 @@ if [ $validate == "y" ]; then
 	echo "$name : validation                  : $(flcomplval $tcFileList.sorted.tmp $tcFileListBN.componentized.tmp $tcFileListBN.not-componentized.tmp $tcCol)" | tee -a $name.log
 	
 	# Clean up
-	rm $tcFileList.sorted.tmp $tcFileListBN.componentized.tmp $tcFileListBN.not-componentized.tmp
+	rm $tcFileList.sorted.tmp $tcFileListBN.not-componentized.tmp
 fi
 
 if [ "$macroCompMap" != "" ]; then
@@ -245,9 +262,9 @@ if [ "$macroCompMap" != "" ]; then
 fi
 
 # Clean up
-rm $tcFileListBN.componentized.components
+rm $tcFileListBN.componentized.tmp
 rm $tcFileList.sorted $cmFileList.sorted
-[ ! -s $tcFileListBN.componentized ] && rm $tcFileListBN.componentized $tcFileListBN.componentized.sorted-by-comps
+[ ! -s $tcFileListBN.componentized ] && rm $tcFileListBN.componentized $tcFileListBN.componentized.sorted-by-components
 [ $tcCol -eq 9 ] && [ ! -s $tcFileListBN.componentized.sorted-by-size ] && rm $tcFileListBN.componentized.sorted-by-size
 
 endTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
