@@ -18,11 +18,13 @@ function usage()
 # Function: eshTotalLog
 # $1: eshFile	- "elf section header" file
 # $2: eshDescr	- "elf section header" file descriptor
-# $3: eshLog	- log file
+# $3: eshType	- "elf section header" object type
+# $4: eshLog	- log file
+#elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " "sections" ${name}.log)
 function eshTotalLog()
 {
 	if [ -s $1 ]; then
-		awk -v eshFile="$1" -v eshDescr="$2" '{total += strtonum("0x"$5)} END { printf "%-12s : %3d sections : %9d B / %6.2f KB / %3.2f MB\n", eshDescr, NR, total, total/1024, total/(1024*1024)}' "$1" | tee -a $3
+		awk -v eshFile="$1" -v eshDescr="$2" -v eshType="$3" '{total += strtonum("0x"$5)} END { printf "%-12s : %6d %s : %9d B / %8.2f KB / %5.2f MB\n", eshDescr, NR, eshType, total, total/1024, total/(1024*1024)}' "$1" | tee -a $4
 	fi
 }
 
@@ -30,13 +32,14 @@ function eshTotalLog()
 # $1: eshFile	- common "elf section header" file
 # $2: eshFile	- a column number in common "elf section header" file that describes section sizes
 # $3: eshDescr	- common "elf section header" file descriptor
-# $4: eshLog	- log file
+# $4: eshType	- "elf section header" object type
+# $5: eshLog	- log file
 function eshLog()
 {
 	if [ -s $1 ]; then
-		awk -v eshFile="$1" -v eshSize="$2" -v eshDescr="$3" 'BEGIN {FS="\t"}; {total += strtonum($eshSize); } END { printf "%-12s : %3d sections : %9d B / %6.2f KB / %3.2f MB : %s\n", eshDescr, NR, total, total/1024, total/(1024*1024), eshFile}' "$1" | tee -a $4
+		awk -v eshFile="$1" -v eshSize="$2" -v eshDescr="$3" -v eshType="$4" 'BEGIN {FS="\t"}; {total += strtonum($eshSize); } END { printf "%-12s : %6d %s : %9d B / %8.2f KB / %5.2f MB : %s\n", eshDescr, NR, eshType, total, total/1024, total/(1024*1024), eshFile}' "$1" | tee -a $5
 	else
-		printf "%-12s : %3d sections : %9d B / %6.2f KB / %3.2f MB : %s\n" "$3" 0 0 0 0 "$1" | tee -a $4
+		printf "%-12s : %6d %s : %9d B / %8.2f KB / %5.2f MB : %s\n" "$3" 0 "$4" 0 0 0 "$1" | tee -a $5
 	fi
 }
 
@@ -46,11 +49,16 @@ cmdline="$0 $@"
 name=`basename $0 .sh`
 echo "$cmdline" > ${name}.log
 
+path=$0
+path=${path%/*}
+source $path/elfHeaders.sh
+
 #NA="N/A"
 
 elf1=
 elf2=
 of=
+sections=
 while [ "$1" != "" ]; do
 	case $1 in
 		-1 )   shift
@@ -61,6 +69,9 @@ while [ "$1" != "" ]; do
 				;;
 		-3 )   shift
 				of=$1
+				;;
+		-s )
+				sections=$1
 				;;
 		-h | --help )   usage
 				exit
@@ -100,20 +111,21 @@ readelf -S ${elf1} | tee ${elf1}.readelf-S | sed 's/^ *//' | cut -b6- | grep "^\
 readelf -S ${elf2} | tee ${elf2}.readelf-S | sed 's/^ *//' | cut -b6- | grep "^\." | tr -s ' ' | sort -k1,1 -o ${elf2}.esh
 
 # find common and specific elf sections
-join -j 1 ${elf1}.esh ${elf2}.esh -o 1.1,1.2,1.5,2.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t0x%06s\t%08d\n", $1, $2, $3, $4, strtonum("0x" $3) - strtonum("0x" $4)}' > $of.common
-join -v1 -j 1 ${elf1}.esh ${elf2}.esh -o 1.1,1.2,1.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t%08d\n", $1, $2, $3, strtonum("0x" $3)}' > $of.spec1
-join -v2 -j 1 ${elf1}.esh ${elf2}.esh -o 1.1,2.2,2.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t%08d\n", $1, $2, $3, strtonum("0x" $3)}' > $of.spec2
-cat $of.common <(awk -v NA=$NA '{printf "%-20s\t%-14s\t%06s\t%08s\t%08d\n", $1, $2, $3, NA, $4}' $of.spec1) <(awk -v NA=$NA '{printf "%-20s\t%-14s\t%08s\t%06s\t%08d\n", $1, $2, NA, $3, $4}' $of.spec2) | sort -k1 -o $of
-sort -t$'\t' -rnk5 $of -o $of.rnk5
+join -j 1 ${elf1}.esh ${elf2}.esh -o 1.1,1.2,1.5,2.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t0x%06s\t%08d\n", $1, $2, $3, $4, strtonum("0x" $3) - strtonum("0x" $4)}' > ${of}.common
+join -v1 -j 1 ${elf1}.esh ${elf2}.esh -o 1.1,1.2,1.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t%08d\n", $1, $2, $3, strtonum("0x" $3)}' > ${of}.specific1
+join -v2 -j 1 ${elf1}.esh ${elf2}.esh -o 2.1,2.2,2.5 | awk '{printf "%-20s\t%-14s\t0x%06s\t%08d\n", $1, $2, $3, strtonum("0x" $3)}' > ${of}.specific2
+cat ${of}.common <(awk -v NA=$NA '{printf "%-20s\t%-14s\t%06s\t%08s\t%08d\n", $1, $2, $3, NA, $4}' ${of}.specific1) <(awk -v NA=$NA '{printf "%-20s\t%-14s\t%08s\t%06s\t%08d\n", $1, $2, NA, $3, $4}' ${of}.specific2) | sort -k1,1 -o ${of}
+sort -t$'\t' -rnk5 ${of} -o ${of}.rnk5
 
 # total/common/specific section analysis of the original ELF files
-printf "ELF #1,#2 total/common/specific section analysis                      : %s\n" $of | tee -a ${name}.log
-elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " ${name}.log)
-elf2Total=$(eshTotalLog ${elf2}.esh "ELF #2 =  total   " ${name}.log)
-elf1Common=$(eshLog $of.common 3 "ELF #1 =  common  " ${name}.log)
-elf2Common=$(eshLog $of.common 4 "ELF #2 =  common  " ${name}.log)
-elf1Specific=$(eshLog $of.spec1  3 "ELF #1 =  specific" ${name}.log)
-elf2Specific=$(eshLog $of.spec2  3 "ELF #2 =  specific" ${name}.log)
+printf "ELF #1,#2 total/common/specific section analysis                             : %s %s\n" ${of} ${of}.rnk5 | tee -a ${name}.log
+objType="sections "
+elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " "$objType" ${name}.log)
+elf2Total=$(eshTotalLog ${elf2}.esh "ELF #2 =  total   " "$objType" ${name}.log)
+elf1Common=$(eshLog ${of}.common 3 "ELF #1 =  common  " "$objType" ${name}.log)
+elf2Common=$(eshLog ${of}.common 4 "ELF #2 =  common  " "$objType" ${name}.log)
+elf1Specific=$(eshLog ${of}.specific1  3 "ELF #1 =  specific" "$objType" ${name}.log)
+elf2Specific=$(eshLog ${of}.specific2  3 "ELF #2 =  specific" "$objType" ${name}.log)
 
 echo "$elf1Total"
 echo "$elf2Total"
@@ -130,7 +142,7 @@ elf1Size=$(echo "$elf1Total" | tr -s ' ' | cut -d ' ' -f9)
 elf2Secs=$(echo "$elf2Total" | tr -s ' ' | cut -d ' ' -f6)
 elf2Size=$(echo "$elf2Total" | tr -s ' ' | cut -d ' ' -f9)
 diffSize=$((elf1Size-elf2Size))
-printf "ELF #1-#2 total    : %3d sections : %9d B / %6.2f KB / %3.2f MB\n" $((elf1Secs-elf2Secs)) $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+printf "ELF #1-#2 total    : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs-elf2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
 
 #ELF #1 and #2 common section and size differencies
 elf1Secs=$(echo "$elf1Common" | tr -s ' ' | cut -d ' ' -f6)
@@ -138,7 +150,7 @@ elf1Size=$(echo "$elf1Common" | tr -s ' ' | cut -d ' ' -f9)
 elf2Secs=$(echo "$elf2Common" | tr -s ' ' | cut -d ' ' -f6)
 elf2Size=$(echo "$elf2Common" | tr -s ' ' | cut -d ' ' -f9)
 diffSize=$((elf1Size-elf2Size))
-printf "ELF #1-#2 common   : %3d sections : %9d B / %6.2f KB / %3.2f MB\n" $((elf1Secs-elf2Secs)) $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+printf "ELF #1-#2 common   : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs-elf2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
 
 #ELF #1 and #2 specific section and size differencies
 elf1Secs=$(echo "$elf1Specific" | tr -s ' ' | cut -d ' ' -f6)
@@ -146,10 +158,24 @@ elf1Size=$(echo "$elf1Specific" | tr -s ' ' | cut -d ' ' -f9)
 elf2Secs=$(echo "$elf2Specific" | tr -s ' ' | cut -d ' ' -f6)
 elf2Size=$(echo "$elf2Specific" | tr -s ' ' | cut -d ' ' -f9)
 diffSize=$((elf1Size-elf2Size))
-printf "ELF #1-#2 specific : %3d sections : %9d B / %6.2f KB / %3.2f MB\n" $((elf1Secs-elf2Secs)) $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+printf "ELF #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs-elf2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+
+# compare sections if requested
+if [ ! -z $sections ]; then
+	$path/elfSectionAnalyzer.sh -e ${elf1} > /dev/null
+	$path/elfSectionAnalyzer.sh -e ${elf2} > /dev/null
+	$path/elfSectionCompare.sh -1 ${elf1}.text -2 ${elf2}.text -3 ${of}.text #> /dev/null
+fi
+
+# add headers
+sed -i "1i$ESH_HEADER_2" ${of}
+sed -i "1i$ESH_HEADER_2" ${of}.common
+sed -i "1i$ESH_HEADER_2" ${of}.rnk5
+[ -s ${of}.specific1 ] && sed -i "1i$ESH_HEADER_1" ${of}.specific1
+[ -s ${of}.specific2 ] && sed -i "1i$ESH_HEADER_1" ${of}.specific2
 
 # Cleanup
-rm ${elf1}.esh ${elf2}.esh
+rm -f ${elf1}.esh ${elf2}.esh
 
 endTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
 execTime=`expr $endTime - $startTime`
