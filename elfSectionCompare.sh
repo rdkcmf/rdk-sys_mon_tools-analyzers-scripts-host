@@ -72,7 +72,7 @@ while [ "$1" != "" ]; do
 		-h | --help )   usage
 				exit
 				;;
-		* )             echo "$name# ERROR : unknown parameter in the command argument list!"
+		* )             echo "$name# ERROR : unknown parameter \"$1\" in the command argument list!"
 				usage
 				exit 1
     esac
@@ -87,7 +87,7 @@ do
 	if [ ! -e "$elfs" ]; then
 		echo "$name : ERROR  : ${elfs} file doesn't exist!"
 		usage
-		exit
+		exit 2
 	fi
 	i=`expr $i + 1`
 done

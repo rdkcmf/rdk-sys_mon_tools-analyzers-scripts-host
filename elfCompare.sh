@@ -12,7 +12,6 @@ function usage()
 	echo "$name# -2    : an ELF object #2"
 	echo "$name# -3    : an output of comparison between ELF objects #1 & #2"
 	echo "$name# -h    : display this help and exit"
-#	echo "$name#       : USE_SYSRES_PLATFORM { ARM | MIPS | x86 } = $([ ! -z "$USE_SYSRES_PLATFORM" ] && echo $USE_SYSRES_PLATFORM || echo "?")" 
 }
 
 # Function: eshTotalLog
@@ -59,6 +58,8 @@ elf1=
 elf2=
 of=
 sections=
+objdump1=
+objdump2=
 while [ "$1" != "" ]; do
 	case $1 in
 		-1 )   shift
@@ -73,10 +74,16 @@ while [ "$1" != "" ]; do
 		-s )
 				sections=$1
 				;;
+		-od1 )  shift
+				objdump1=$1
+				;;
+		-od2 )  shift
+				objdump2=$1
+				;;
 		-h | --help )   usage
 				exit
 				;;
-		* )             echo "$name# ERROR : unknown parameter in the command argument list!"
+		* )             echo "$name# ERROR : unknown parameter \"$1\" in the command argument list!" | tee -a ${name}.log
 				usage
 				exit 1
     esac
@@ -89,14 +96,14 @@ i=1
 for elf in "$elf1" "$elf2"
 do
 	if [ ! -e "$elf" ]; then
-		echo "$name : ERROR  : ${elf} file doesn't exist!"
+		echo "$name : ERROR  : ${elf} file doesn't exist!" | tee -a ${name}.log
 		usage
-		exit
+		exit 2
 	fi
 	isElf="$(file -b "$elf" | grep "^ELF ")"
 	if [ -z "$isElf" ]; then
-		echo "$name : ERROR  : ${elf} is NOT an ELF file!"
-		exit
+		echo "$name : ERROR  : ${elf} is NOT an ELF file!" | tee -a ${name}.log
+		exit 3
 	fi
 	i=`expr $i + 1`
 done
@@ -162,8 +169,20 @@ printf "ELF #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs
 
 # compare sections if requested
 if [ ! -z $sections ]; then
-	$path/elfSectionAnalyzer.sh -e ${elf1} > /dev/null
-	$path/elfSectionAnalyzer.sh -e ${elf2} > /dev/null
+	[ ! -z "$objdump1" ] && objdump1p="-od $objdump1"
+	$path/elfSectionAnalyzer.sh -e ${elf1} $objdump1p > /dev/null
+	_err_=$?
+	if [ $_err_ != 0 ]; then
+		echo "$name: Error=$_err_ executing \"$path/elfSectionAnalyzer.sh -e ${elf1} $objdump1p. Exit.\"" | tee -a ${name}.log
+		exit 4
+	fi
+	[ ! -z "$objdump2" ] && objdump2p="-od $objdump2"
+	$path/elfSectionAnalyzer.sh -e ${elf2} $objdump2p > /dev/null
+	_err_=$?
+	if [ $_err_ != 0 ]; then
+		echo "$name: Error=$_err_ executing \"$path/elfSectionAnalyzer.sh -e ${elf2} $objdump2p. Exit.\"" | tee -a ${name}.log
+		exit 5
+	fi
 	$path/elfSectionCompare.sh -1 ${elf1}.text -2 ${elf2}.text -3 ${of}.text #> /dev/null
 fi
 

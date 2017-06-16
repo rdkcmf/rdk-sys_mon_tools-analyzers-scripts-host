@@ -7,15 +7,16 @@ function usage()
 	echo "$name# Usage : `basename $0 .sh` [-e elf [-o of]] | [-h]"
 	echo "$name# ELF object section analyzer"
 	echo "$name# -e    : an ELF object"
+	echo "$name# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
 	echo "$name# -o    : an output file base name"
 	echo "$name# -F    : output a function file offset"
 	echo "$name# -h    : display this help and exit"
-	echo "$name#       : USE_SYSRES_PLATFORM { ARM | MIPS | x86 } = $([ ! -z "$USE_SYSRES_PLATFORM" ] && echo $USE_SYSRES_PLATFORM || echo "?")" 
 }
 
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
+echo "$cmdline" > ${name}.log
 
 path=$0
 path=${path%/*}
@@ -24,6 +25,7 @@ source $path/elfHeaders.sh
 of=
 elf=
 funcFO=
+objdump=
 while [ "$1" != "" ]; do
 	case $1 in
 		-e )   shift
@@ -32,47 +34,57 @@ while [ "$1" != "" ]; do
 		-o )   shift
 				of=$1
 				;;
+		-od )  shift
+				objdump=$1
+				;;
 		-F )   shift
 				funcFO=y
 				;;
 		-h | --help )   usage
 				exit
 				;;
-		* )             echo "$name# ERROR : unknown parameter in the command argument list!"
+		* )             echo "$name# ERROR : unknown parameter \"$1\" in the command argument list!" | tee -a ${name}.log
 				usage
 				exit 1
     esac
     shift
 done
 
-objdump=
-platform=
-if [ "$USE_SYSRES_PLATFORM" != "" ]; then
-	platform=$(echo $USE_SYSRES_PLATFORM | tr '[:lower:]' '[:upper:]')
-	case $platform in
-		ARM  ) objdump=armeb-rdk-linux-uclibceabi-objdump ;;
-		x86  ) objdump=i686-cm-linux-objdump ;;
-		MIPS ) objdump=mipsel-linux-objdump ;;
-		   * ) 
-			echo "$name# ERROR : unsupported $USE_SYSRES_PLATFORM platform"
-			echo "$name# ERROR : USE_SYSRES_PLATFORM = {ARM | MIPS | x86}"
-			usage
-			exit 1
-	esac
-
-	if [ "$(which $objdump)" == "" ]; then
-		echo "$name# ERROR : Path to $objdump is not set!"
-		usage
-		exit
-	fi
-else
-	echo "$name# ERROR : USE_SYSRES_PLATFORM = {ARM | MIPS | x86} env variable is NOT defined!"
+# Check if an elf object
+isElf="$(file -b "$elf" | grep "^ELF ")"
+if [ -z "$isElf" ]; then
+	echo "$name : ERROR  : ${elf} is NOT an ELF file!" | tee -a ${name}.log
 	usage
-	exit 1
+	exit 2
+fi
+
+# Check if a supported ELF object architechture
+elfArch=$(echo "$isElf" | cut -d, -f2)
+if [ ! -z "$(echo "$elfArch" | grep "MIPS")" ]; then
+	[ -z $objdump ] && objdump=mipsel-linux-objdump
+elif [ ! -z "$(echo "$elfArch" | grep "Intel .*86")" ]; then
+	[ -z $objdump ] && objdump=i686-cm-linux-objdump
+elif [ ! -z "$(echo "$elfArch" | grep "ARM")" ]; then
+	[ -z $objdump ] && objdump=armeb-rdk-linux-uclibceabi-objdump
+else
+	echo "$name# ERROR : unsupported architechture : $elfArch" | tee -a ${name}.log
+	echo "$name# ERROR : supported architechtures  = {ARM | MIPS | x86}" | tee -a ${name}.log
+	usage
+	exit 3
+fi
+
+# Check if PATH to $objdump is set
+if [ "$(which $objdump)" == "" ]; then
+	echo "$name# ERROR : Path to $objdump is not set!" | tee -a ${name}.log
+	usage
+	exit 4
 fi
 
 [ -z "$of" ] && of=${elf}
-#echo "ELFS #3 =  $of" | tee -a ${name}.log
+
+echo "ELF = $elf" | tee -a ${name}.log
+echo "out = $of" | tee -a ${name}.log
+echo "od  = $objdump" | tee -a ${name}.log
 
 # create "start/end of executable sections" file
 readelf -S "$elf" | grep " AX " | tr -s '[]' ' ' | tr -s ' ' | cut -d ' ' -f5,7 > ${of}.exec-secs
