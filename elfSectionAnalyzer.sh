@@ -9,7 +9,8 @@ function usage()
 	echo "$name# -e    : an ELF object"
 	echo "$name# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
 	echo "$name# -o    : an output file base name"
-	echo "$name# -F    : output a function file offset"
+	echo "$name# -V    : validate produced data"
+	echo "$name# -F    : produce function file offsets - not implemented yet"
 	echo "$name# -h    : display this help and exit"
 }
 
@@ -26,6 +27,7 @@ of=
 elf=
 funcFO=
 objdump=
+validation=
 while [ "$1" != "" ]; do
 	case $1 in
 		-e )   shift
@@ -36,6 +38,8 @@ while [ "$1" != "" ]; do
 				;;
 		-od )  shift
 				objdump=$1
+				;;
+		-V )		validation="y"
 				;;
 		-F )   shift
 				funcFO=y
@@ -61,11 +65,11 @@ fi
 # Check if a supported ELF object architechture
 elfArch=$(echo "$isElf" | cut -d, -f2)
 if [ ! -z "$(echo "$elfArch" | grep "MIPS")" ]; then
-	[ -z $objdump ] && objdump=mipsel-linux-objdump
+	[ -z ${objdump} ] && objdump=mipsel-linux-objdump
 elif [ ! -z "$(echo "$elfArch" | grep "Intel .*86")" ]; then
-	[ -z $objdump ] && objdump=i686-cm-linux-objdump
+	[ -z ${objdump} ] && objdump=i686-cm-linux-objdump
 elif [ ! -z "$(echo "$elfArch" | grep "ARM")" ]; then
-	[ -z $objdump ] && objdump=armeb-rdk-linux-uclibceabi-objdump
+	[ -z ${objdump} ] && objdump=armeb-rdk-linux-uclibceabi-objdump
 else
 	echo "$name# ERROR : unsupported architechture : $elfArch" | tee -a ${name}.log
 	echo "$name# ERROR : supported architechtures  = {ARM | MIPS | x86}" | tee -a ${name}.log
@@ -74,45 +78,65 @@ else
 fi
 
 # Check if PATH to $objdump is set
-if [ "$(which $objdump)" == "" ]; then
-	echo "$name# ERROR : Path to $objdump is not set!" | tee -a ${name}.log
+if [ "$(which ${objdump})" == "" ]; then
+	echo "$name# ERROR : Path to ${objdump} is not set!" | tee -a ${name}.log
 	usage
 	exit 4
 fi
 
 [ -z "$of" ] && of=${elf}
 
-echo "ELF = $elf" | tee -a ${name}.log
-echo "out = $of" | tee -a ${name}.log
-echo "od  = $objdump" | tee -a ${name}.log
+echo "ELF = ${elf}" | tee -a ${name}.log
+echo "out = ${of}" | tee -a ${name}.log
+echo "od  = ${objdump}" | tee -a ${name}.log
 
 # create "start/end of executable sections" file
-readelf -S "$elf" | grep " AX " | tr -s '[]' ' ' | tr -s ' ' | cut -d ' ' -f5,7 > ${of}.exec-secs
-endst=0x$(tail -1 ${of}.exec-secs | cut -d ' ' -f1)
-endsi=0x$(tail -1 ${of}.exec-secs | cut -d ' ' -f2)
-start=0x$(head -1 ${of}.exec-secs | cut -d ' ' -f1)
+readelf -S "$elf" | grep " AX " | tr -s '[]' ' ' | tr -s ' ' | cut -d ' ' -f3,5,7 | awk '{printf "0x%s\t%09d\t%s\n", $2, strtonum("0x"$3), $1}' > ${of}.ax-secs
+endst=$(tail -1 ${of}.ax-secs | cut -f1)
+endsi=$(tail -1 ${of}.ax-secs | cut -f2 | awk '{printf "0x%x\n", $1}')
+start=$(head -1 ${of}.ax-secs | cut -f1)
 end=$((endst + endsi - 1))
 
 # create function map file: 1c - start address; 2c - length; 3c - function file offset; 4c - function name
-$objdump -dC "$elf" | grep "^[[:xdigit:]]\{8\}" | awk '{printf "0x%s\n", $0}' > ${of}.text.tmp
+_err_=$?
+${objdump} -dC "$elf" | grep "^[[:xdigit:]]\{8\}" | awk '{printf "0x%s\n", $0}' > ${of}.ax.tmp
+if [ $_err_ != 0 ]; then
+	echo "$name: Error=$_err_ executing ${objdump} ${elf}. Exit." | tee -a ${name}.log
+	exit 5
+fi
 pFuncAddr=
 pFuncAttr=
-cat /dev/null > ${of}.text
+cat /dev/null > ${of}.ax
 while read -r cFuncAddr cFuncAttr
 do
-	[ ! -z "$pFuncAddr" ] && printf "0x%08x\t%09d\t%s\n" $pFuncAddr $((cFuncAddr-pFuncAddr)) "$pFuncName" >> ${of}.text
+	[ ! -z "$pFuncAddr" ] && printf "0x%08x\t%09d\t%s\n" $pFuncAddr $((cFuncAddr-pFuncAddr)) "$pFuncName" >> ${of}.ax
 	pFuncAddr=$cFuncAddr
 	pFuncName=$cFuncAttr
-done < ${of}.text.tmp
-lastFunc=$(tail -1 ${of}.text.tmp)
-printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.text
-sort -rnk2 ${of}.text -o ${of}.text.rnk2
+done < ${of}.ax.tmp
+lastFunc=$(tail -1 ${of}.ax.tmp)
+printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.ax
+sort -rnk2 ${of}.ax -o ${of}.ax.rnk2
 
-# add headers
-sed -i "1i$(printf "0x%08x\t%s\n" $((start)) "$ELF_PSEC_STARTOF_TEXT")" ${of}.text
-printf "0x%08x\t%s\n" $((end)) "$ELF_PSEC_ENDOF_TEXT" >> ${of}.text
-sed -i "1i$ESH_HEADER_TEXT_1" ${of}.text
-sed -i "1i$ESH_HEADER_TEXT_1" ${of}.text.rnk2
+totalAXSecs=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
+if [ "$validation" == "y" ]; then
+	totalText=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax)
+	totalTextRnk2=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax.rnk2)
+	if [ "$totalAXSecs" -ne "$totalText" ]; then
+		echo "$name# WARN : validation failed for ${of}.ax : file total size = $totalText : total AX sections size = $totalAXSecs : diff = $((totalText-totalAXSecs))" | tee -a ${name}.log
+	elif [ "$totalAXSecs" -ne "$totalTextRnk2" ]; then
+		echo "$name# WARN : validation failed for ${of}.ax.rnk2: file total size = $totalTextRnk2 : total AX sections size = $totalAXSecs : diff = $((totalText-totalAXSecs))" | tee -a ${name}.log
+	else
+		echo "$name# : validation success : total size = $totalAXSecs : ${of}.ax ${of}.ax.rnk2" | tee -a ${name}.log
+	fi
+fi
+
+# add headers/footers
+sed -i "1i$(printf "0x%08x\t%s\n" $((start)) "$ELF_PSEC_STARTOF_TEXT")" ${of}.ax
+printf "0x%08x\t%s\n" $((end)) "$ELF_PSEC_ENDOF_TEXT" >> ${of}.ax
+sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax
+sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax.rnk2
+sed -i "1i$ESH_HEADER_AXSECS" ${of}.ax-secs
+printf "%10s\t%09d\t%s\n" " " $totalAXSecs "Total" >> ${of}.ax-secs
 
 # Cleanup
-rm ${of}.text.tmp ${of}.exec-secs
+rm ${of}.ax.tmp

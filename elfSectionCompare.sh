@@ -6,13 +6,14 @@
 # Function: usage
 function usage()
 {
-	echo "$name# Usage : `basename $0 .sh` [-1 elfs1 -2 elfs2 [-3 elfs-diff]] | [-h]"
-	echo "$name# Compare two ELF sections"
-	echo "$name# -1    : an ELF section #1"
-	echo "$name# -2    : an ELF section #2"
-	echo "$name# -3    : an output of comparison between ELF section #1 & #2"
-	echo "$name# -h    : display this help and exit"
-#	echo "$name#       : USE_SYSRES_PLATFORM { ARM | MIPS | x86 } = $([ ! -z "$USE_SYSRES_PLATFORM" ] && echo $USE_SYSRES_PLATFORM || echo "?")" 
+	echo "${name}# Usage : `basename $0 .sh` [-1 elfs1 -2 elfs2 [-3 elfs-diff]] | [-h]"
+	echo "${name}# Compare two ELF sections"
+	echo "${name}# -1    : an ELF section #1"
+	echo "${name}# -2    : an ELF section #2"
+	echo "${name}# -3    : an output of comparison between ELF section #1 & #2"
+	echo "${name}# -V    : validate produced data"
+	echo "${name}# -h    : display this help and exit"
+#	echo "${name}#       : USE_SYSRES_PLATFORM { ARM | MIPS | x86 } = $([ ! -z "$USE_SYSRES_PLATFORM" ] && echo $USE_SYSRES_PLATFORM || echo "?")" 
 }
 
 # Function: eshTotalLog
@@ -44,6 +45,38 @@ function eshLog()
 	fi
 }
 
+# $1: eshFile	- a file with ELF sections: "size funcName" to validate
+# $2: eshSizeT  - size validation value
+# $3: eshLog	- log file
+function eshFileValidation()
+{
+	local _eshFileMetrics_=$(awk 'BEGIN {FS="\t"}; {total += $1} END { printf "%d\n", total}' $1)
+	if [ $2 -ne $_eshFileMetrics_ ]; then
+		echo "${name}# WARN : file validation failed for elfsSizeTotal: $2 != $_eshFileMetrics_) : $1" | tee -a $3
+	else
+		echo "${name}# : file validation success : $1" | tee -a $3
+	fi
+}
+
+# $1: eshFile	- a file with ELF sections: "size#1 size#2 size#1-size#2 funcName" to validate
+# $2: esh1SizeT - size#1 validation value
+# $3: esh2SizeT - size#2 validation value
+# $4: esh2SizeD - size#1-size#2 validation value
+# $5: eshLog	- log file
+function eshFileValidation2()
+{
+	local _eshFileMetrics_=$(awk 'BEGIN {FS="\t"}; {total1 += $1; total2 += $2; totald += $3; } END { printf "%d\t%d\t%d\n", total1, total2, totald}' $1)
+	if [ $2 -ne $(echo "$_eshFileMetrics_" | cut -f1) ]; then
+		echo "${name}# WARN : file validation failed for elfs1SizeTotal: $2 != $(echo "$_eshFileMetrics_" | cut -f1) : $1" | tee -a $5
+	elif [ $3 -ne $(echo "$_eshFileMetrics_" | cut -f2) ]; then
+		echo "${name}# WARN : file validation failed for elfs2SizeTotal: $3 != $(echo "$_eshFileMetrics_" | cut -f2) : $1" | tee -a $5
+	elif [ $4 -ne $(echo "$_eshFileMetrics_" | cut -f3) ]; then
+		echo "${name}# WARN : file validation failed for diffSizeTotal: $4 != $(echo "$_eshFileMetrics_" | cut -f3) : $1" | tee -a $5
+	else
+		echo "${name}# : file validation success : $1" | tee -a $5
+	fi
+}
+
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
@@ -58,6 +91,7 @@ source $path/elfHeaders.sh
 elfs1=
 elfs2=
 of=
+validation=
 while [ "$1" != "" ]; do
 	case $1 in
 		-1 )   shift
@@ -69,10 +103,12 @@ while [ "$1" != "" ]; do
 		-3 )   shift
 				of=$1
 				;;
+		-V )		validation="y"
+				;;
 		-h | --help )   usage
 				exit
 				;;
-		* )             echo "$name# ERROR : unknown parameter \"$1\" in the command argument list!"
+		* )             echo "${name}# ERROR : unknown parameter \"$1\" in the command argument list!"
 				usage
 				exit 1
     esac
@@ -85,7 +121,7 @@ i=1
 for elfs in "$elfs1" "$elfs2"
 do
 	if [ ! -e "$elfs" ]; then
-		echo "$name : ERROR  : ${elfs} file doesn't exist!"
+		echo "${name} : ERROR  : ${elfs} file doesn't exist!"
 		usage
 		exit 2
 	fi
@@ -135,28 +171,49 @@ echo "$elfs2Specific"
 # total/common/specific section analysis of differences between ELF files
 printf "ELFS #1-#2 total/common/specific section analysis:\n" | tee -a ${name}.log
 #ELFS #1 and #2 total section and size differencies
-elfs1Secs=$(echo "$elfs1Total" | tr -s ' ' | cut -d ' ' -f6)
-elfs1Size=$(echo "$elfs1Total" | tr -s ' ' | cut -d ' ' -f9)
-elfs2Secs=$(echo "$elfs2Total" | tr -s ' ' | cut -d ' ' -f6)
-elfs2Size=$(echo "$elfs2Total" | tr -s ' ' | cut -d ' ' -f9)
-diffSize=$((elfs1Size-elfs2Size))
-printf "ELFS #1-#2 total    : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1Secs-elfs2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+elfs1SecsTotal=$(echo "$elfs1Total" | tr -s ' ' | cut -d ' ' -f6)
+elfs1SizeTotal=$(echo "$elfs1Total" | tr -s ' ' | cut -d ' ' -f9)
+elfs2SecsTotal=$(echo "$elfs2Total" | tr -s ' ' | cut -d ' ' -f6)
+elfs2SizeTotal=$(echo "$elfs2Total" | tr -s ' ' | cut -d ' ' -f9)
+diffSizeTotal=$((elfs1SizeTotal-elfs2SizeTotal))
+printf "ELFS #1-#2 total    : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1SecsTotal-elfs2SecsTotal)) "$objType" $diffSizeTotal $((diffSizeTotal/1024)) $((diffSizeTotal/(1024*1024))) | tee -a ${name}.log
 
 #ELFS #1 and #2 common section and size differencies
-elfs1Secs=$(echo "$elfs1Common" | tr -s ' ' | cut -d ' ' -f6)
-elfs1Size=$(echo "$elfs1Common" | tr -s ' ' | cut -d ' ' -f9)
-elfs2Secs=$(echo "$elfs2Common" | tr -s ' ' | cut -d ' ' -f6)
-elfs2Size=$(echo "$elfs2Common" | tr -s ' ' | cut -d ' ' -f9)
-diffSize=$((elfs1Size-elfs2Size))
-printf "ELFS #1-#2 common   : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1Secs-elfs2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+elfs1SecsCommon=$(echo "$elfs1Common" | tr -s ' ' | cut -d ' ' -f6)
+elfs1SizeCommon=$(echo "$elfs1Common" | tr -s ' ' | cut -d ' ' -f9)
+elfs2SecsCommon=$(echo "$elfs2Common" | tr -s ' ' | cut -d ' ' -f6)
+elfs2SizeCommon=$(echo "$elfs2Common" | tr -s ' ' | cut -d ' ' -f9)
+diffSizeCommon=$((elfs1SizeCommon-elfs2SizeCommon))
+printf "ELFS #1-#2 common   : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1SecsCommon-elfs2SecsCommon)) "$objType" $diffSizeCommon $((diffSizeCommon/1024)) $((diffSizeCommon/(1024*1024))) | tee -a ${name}.log
 
 #ELFS #1 and #2 specific section and size differencies
-elfs1Secs=$(echo "$elfs1Specific" | tr -s ' ' | cut -d ' ' -f6)
-elfs1Size=$(echo "$elfs1Specific" | tr -s ' ' | cut -d ' ' -f9)
-elfs2Secs=$(echo "$elfs2Specific" | tr -s ' ' | cut -d ' ' -f6)
-elfs2Size=$(echo "$elfs2Specific" | tr -s ' ' | cut -d ' ' -f9)
-diffSize=$((elfs1Size-elfs2Size))
-printf "ELFS #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1Secs-elfs2Secs)) "$objType" $diffSize $((diffSize/1024)) $((diffSize/(1024*1024))) | tee -a ${name}.log
+elfs1SecsSpecific=$(echo "$elfs1Specific" | tr -s ' ' | cut -d ' ' -f6)
+elfs1SizeSpecific=$(echo "$elfs1Specific" | tr -s ' ' | cut -d ' ' -f9)
+elfs2SecsSpecific=$(echo "$elfs2Specific" | tr -s ' ' | cut -d ' ' -f6)
+elfs2SizeSpecific=$(echo "$elfs2Specific" | tr -s ' ' | cut -d ' ' -f9)
+diffSizeSpecific=$((elfs1SizeSpecific-elfs2SizeSpecific))
+printf "ELFS #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elfs1SecsSpecific-elfs2SecsSpecific)) "$objType" $diffSizeSpecific $((diffSizeSpecific/1024)) $((diffSizeSpecific/(1024*1024))) | tee -a ${name}.log
+
+if [ "$validation" == "y" ]; then
+	if [ $elfs1SecsTotal -ne $((elfs1SecsCommon+elfs1SecsSpecific)) ]; then
+		echo "${name}# WARN : data validation failed for elfs1SecsTotal: $elfs1SecsTotal != $((elfs1SecsCommon+elfs1SecsSpecific))" | tee -a ${name}.log
+	elif [ $elfs2SecsTotal -ne $((elfs2SecsCommon+elfs2SecsSpecific)) ]; then
+		echo "${name}# WARN : data validation failed for elfs2SecsTotal: $elfs2SecsTotal != $((elfs2SecsCommon+elfs2SecsSpecific))" | tee -a ${name}.log
+	elif [ $elfs1SizeTotal -ne $((elfs1SizeCommon+elfs1SizeSpecific)) ]; then
+		echo "${name}# WARN : data validation failed for elfs1SizeTotal: $elfs1SizeTotal != $((elfs1SizeCommon+elfs1SizeSpecific))" | tee -a ${name}.log
+	elif [ $elfs2SizeTotal -ne $((elfs2SizeCommon+elfs2SizeSpecific)) ]; then
+		echo "${name}# WARN : data validation failed for elfs2SizeTotal: $elfs2SizeTotal != $((elfs2SizeCommon+elfs2SizeSpecific))" | tee -a ${name}.log
+	else
+		echo "${name}# : data validation success" | tee -a ${name}.log
+	fi
+
+	eshFileValidation2 ${of} $elfs1SizeTotal $elfs2SizeTotal $diffSizeTotal ${name}.log
+	eshFileValidation2 ${of}.rnk3 $elfs1SizeTotal $elfs2SizeTotal $diffSizeTotal ${name}.log
+	eshFileValidation2 ${of}.common $elfs1SizeCommon $elfs2SizeCommon $diffSizeCommon ${name}.log
+
+	eshFileValidation ${of}.specific1 $elfs1SizeSpecific ${name}.log
+	eshFileValidation ${of}.specific2 $elfs2SizeSpecific ${name}.log
+fi
 
 # add headers
 [ -s ${of} ] && sed -i "1i$ESH_HEADER_TEXT_2" ${of}
@@ -170,5 +227,5 @@ rm -f ${elfs1}.tmp ${elfs2}.tmp ${of}.common.names ${elfs1}.common ${elfs2}.comm
 
 endTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
 execTime=`expr $endTime - $startTime`
-printf "$name: Execution time: %02dh:%02dm:%02ds\n" $((execTime/3600)) $((execTime%3600/60)) $((execTime%60))
+printf "${name}: Execution time: %02dh:%02dm:%02ds\n" $((execTime/3600)) $((execTime%3600/60)) $((execTime%60))
 
