@@ -9,6 +9,7 @@ function usage()
 	echo "$name# -e    : an ELF object"
 	echo "$name# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
 	echo "$name# -o    : an output file base name"
+	echo "$name# -s    : add source code locations to output"
 	echo "$name# -V    : validate produced data"
 	echo "$name# -F    : produce function file offsets - not implemented yet"
 	echo "$name# -h    : display this help and exit"
@@ -27,6 +28,7 @@ of=
 elf=
 funcFO=
 objdump=
+source=
 validation=
 while [ "$1" != "" ]; do
 	case $1 in
@@ -40,6 +42,8 @@ while [ "$1" != "" ]; do
 				objdump=$1
 				;;
 		-V )		validation="y"
+				;;
+		-s )		source=y
 				;;
 		-F )   shift
 				funcFO=y
@@ -115,6 +119,15 @@ do
 done < ${of}.ax.tmp
 lastFunc=$(tail -1 ${of}.ax.tmp)
 printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.ax
+if [ ! -z "$source" ]; then
+	if [ ! -z "$(echo $isElf | grep "not stripped$")" ]; then
+		maxExt=$(cut -f3 ${of}.ax | wc -L | cut -f1)
+		printf "%-10s\t%-9s\t%-*s\t%s\n" "Address" "Size" $maxExt "Function Name" "Function source location"> ${of}.ax.source
+		cut -f1 ${of}.ax | addr2line -Cp -e ${elf} | paste ${of}.ax - | awk -v mL=$maxExt 'BEGIN {FS="\t"}; {printf "%s\t%s\t%-*s\t%s\n", $1, $2, mL, $3, $4}' >> ${of}.ax.source
+	else
+		echo "$name# WARN : ELF ${elf} is stripped, no symbols"
+	fi
+fi
 sort -rnk2 ${of}.ax -o ${of}.ax.rnk2
 
 totalAXSecsSize=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
