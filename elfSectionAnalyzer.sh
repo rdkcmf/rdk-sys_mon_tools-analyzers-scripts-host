@@ -17,7 +17,7 @@ function usage()
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
-echo "$cmdline" > ${name}.log
+echo "$cmdline" >> ${name}.log
 
 path=$0
 path=${path%/*}
@@ -117,16 +117,17 @@ lastFunc=$(tail -1 ${of}.ax.tmp)
 printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.ax
 sort -rnk2 ${of}.ax -o ${of}.ax.rnk2
 
-totalAXSecs=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
+totalAXSecsSize=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
+totalAXSecsSpace=$((endst + endsi - start))
 if [ "$validation" == "y" ]; then
-	totalText=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax)
-	totalTextRnk2=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax.rnk2)
-	if [ "$totalAXSecs" -ne "$totalText" ]; then
-		echo "$name# WARN : validation failed for ${of}.ax : file total size = $totalText : total AX sections size = $totalAXSecs : diff = $((totalText-totalAXSecs))" | tee -a ${name}.log
-	elif [ "$totalAXSecs" -ne "$totalTextRnk2" ]; then
-		echo "$name# WARN : validation failed for ${of}.ax.rnk2: file total size = $totalTextRnk2 : total AX sections size = $totalAXSecs : diff = $((totalText-totalAXSecs))" | tee -a ${name}.log
+	totalAXSecsSizeFile=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax)
+	totalAXSecsSizeRnk2File=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax.rnk2)
+	if [ "$totalAXSecsSpace" -ne "$totalAXSecsSizeFile" ]; then
+		echo "$name# WARN : validation failed for ${of}.ax : file total size = $totalAXSecsSizeFile : total AX sections space = $totalAXSecsSpace : diff = $((totalAXSecsSizeFile-totalAXSecsSpace))" | tee -a ${name}.log
+	elif [ "$totalAXSecsSpace" -ne "$totalAXSecsSizeRnk2File" ]; then
+		echo "$name# WARN : validation failed for ${of}.ax.rnk2: file total size = $totalAXSecsSizeRnk2File : total AX sections space = $totalAXSecsSpace : diff = $((totalAXSecsSizeFile-totalAXSecsSpace))" | tee -a ${name}.log
 	else
-		echo "$name# : validation success : total size = $totalAXSecs : ${of}.ax ${of}.ax.rnk2" | tee -a ${name}.log
+		echo "$name# : validation success : total AX secs space = $totalAXSecsSpace : ${of}.ax ${of}.ax.rnk2" | tee -a ${name}.log
 	fi
 fi
 
@@ -136,7 +137,7 @@ printf "0x%08x\t%s\n" $((end)) "$ELF_PSEC_ENDOF_TEXT" >> ${of}.ax
 sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax
 sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax.rnk2
 sed -i "1i$ESH_HEADER_AXSECS" ${of}.ax-secs
-printf "%10s\t%09d\t%s\n" " " $totalAXSecs "Total" >> ${of}.ax-secs
+printf "%10s%09d/%09d\t%s\n" " " $totalAXSecsSpace $totalAXSecsSize "Total space/size" >> ${of}.ax-secs
 
 # Cleanup
 rm ${of}.ax.tmp

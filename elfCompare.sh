@@ -205,6 +205,7 @@ printf "ELF #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs
 
 # compare sections if requested
 if [ ! -z $sections ]; then
+	rm -f elfSectionAnalyzer.log
 	[ ! -z "$objdump1" ] && objdump1p="-od $objdump1"
 	${path}/elfSectionAnalyzer.sh -e ${elf1} $objdump1p $validation > /dev/null
 	_err_=$?
