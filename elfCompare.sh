@@ -11,6 +11,7 @@ function usage()
 	echo "${name}# -1    : an ELF object #1"
 	echo "${name}# -2    : an ELF object #2"
 	echo "${name}# -3    : an output of comparison between ELF objects #1 & #2"
+	echo "${name}# -s    : compare sections"
 	echo "${name}# -V    : validate produced data"
 	echo "${name}# -h    : display this help and exit"
 }
@@ -20,7 +21,6 @@ function usage()
 # $2: eshDescr	- "elf section header" file descriptor
 # $3: eshType	- "elf section header" object type
 # $4: eshLog	- log file
-#elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " "sections" ${name}.log)
 function eshTotalLog()
 {
 	if [ -s $1 ]; then
@@ -144,7 +144,7 @@ do
 	i=`expr $i + 1`
 done
 
-[ -z "$of" ] && of="${elf1%%.*}.${elf2%%.*}.esh"
+[ -z "$of" ] && of="${elf1}-${elf2}.esh"
 echo "ELF #3 =  $of" | tee -a ${name}.log
 
 startTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
@@ -162,7 +162,7 @@ sort -t$'\t' -rnk5 ${of} -o ${of}.rnk5
 
 # total/common/specific section analysis of the original ELF files
 printf "ELF #1,#2 total/common/specific section analysis                             : %s %s\n" ${of} ${of}.rnk5 | tee -a ${name}.log
-objType="sections "
+objType="sections"
 elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " "$objType" ${name}.log)
 elf2Total=$(eshTotalLog ${elf2}.esh "ELF #2 =  total   " "$objType" ${name}.log)
 elf1Common=$(eshLog ${of}.common 3 "ELF #1 =  common  " "$objType" ${name}.log)
@@ -207,20 +207,27 @@ printf "ELF #1-#2 specific : %6d %s : %9d B / %8.2f KB / %5.2f MB\n" $((elf1Secs
 if [ ! -z $sections ]; then
 	rm -f elfSectionAnalyzer.log
 	[ ! -z "$objdump1" ] && objdump1p="-od $objdump1"
-	${path}/elfSectionAnalyzer.sh -e ${elf1} $objdump1p $validation > /dev/null
+	${path}/elfSectionAnalyzer.sh -e ${elf1} $objdump1p $validation -al > /dev/null
 	_err_=$?
 	if [ $_err_ != 0 ]; then
 		echo "${name}: Error=$_err_ executing \"${path}/elfSectionAnalyzer.sh -e ${elf1} $objdump1p $validation. Exit.\"" | tee -a ${name}.log
 		exit 4
 	fi
 	[ ! -z "$objdump2" ] && objdump2p="-od $objdump2"
-	${path}/elfSectionAnalyzer.sh -e ${elf2} $objdump2p $validation > /dev/null
+	${path}/elfSectionAnalyzer.sh -e ${elf2} $objdump2p $validation -al > /dev/null
 	_err_=$?
 	if [ $_err_ != 0 ]; then
 		echo "${name}: Error=$_err_ executing \"${path}/elfSectionAnalyzer.sh -e ${elf2} $objdump2p $validation. Exit.\"" | tee -a ${name}.log
 		exit 5
 	fi
-	${path}/elfSectionCompare.sh -1 ${elf1}.ax -2 ${elf2}.ax -3 ${of}.ax $validation #> /dev/null
+
+	rm -f elfSectionCompare.log
+	for ext in Ftext Otext Odata Orodata Odata.rel.ro Obss; do
+		if [ -s ${elf1}.${ext} ] && [ -s ${elf1}.${ext} ]; then
+			${path}/elfSectionCompare.sh -1 ${elf1}.${ext} -2 ${elf2}.${ext} -3 ${of}.${ext} $validation -al #> /dev/null
+		fi
+	done
+
 fi
 
 if [ ! -z "$validation" ]; then

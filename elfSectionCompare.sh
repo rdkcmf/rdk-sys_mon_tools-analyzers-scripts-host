@@ -11,6 +11,7 @@ function usage()
 	echo "${name}# -1    : an ELF section #1"
 	echo "${name}# -2    : an ELF section #2"
 	echo "${name}# -3    : an output of comparison between ELF section #1 & #2"
+	echo "${name}# -al   : append logging"
 	echo "${name}# -V    : validate produced data"
 	echo "${name}# -h    : display this help and exit"
 #	echo "${name}#       : USE_SYSRES_PLATFORM { ARM | MIPS | x86 } = $([ ! -z "$USE_SYSRES_PLATFORM" ] && echo $USE_SYSRES_PLATFORM || echo "?")" 
@@ -80,7 +81,6 @@ function eshFileValidation2()
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
-echo "$cmdline" > ${name}.log
 
 path=$0
 path=${path%/*}
@@ -92,6 +92,7 @@ elfs1=
 elfs2=
 of=
 validation=
+appendLog=
 while [ "$1" != "" ]; do
 	case $1 in
 		-1 )   shift
@@ -102,6 +103,8 @@ while [ "$1" != "" ]; do
 				;;
 		-3 )   shift
 				of=$1
+				;;
+		-al )		appendLog=y
 				;;
 		-V )		validation="y"
 				;;
@@ -114,6 +117,8 @@ while [ "$1" != "" ]; do
     esac
     shift
 done
+
+[ -z "$appendLog" ] && echo "$cmdline" > ${name}.log || echo "$cmdline" >> ${name}.log
 
 echo "ELFS #1 =  $elfs1" | tee -a ${name}.log
 echo "ELFS #2 =  $elfs2" | tee -a ${name}.log
@@ -128,12 +133,13 @@ do
 	i=`expr $i + 1`
 done
 
-[ -z "$of" ] && of="${elfs1%%.*}.${elfs2%%.*}.ees"
+ofExt=${elfs1##*.}
+[ -z "$of" ] && of="${elfs1%.*}-${elfs2%.*}.${ofExt}"
 echo "ELFS #3 =  ${of}" | tee -a ${name}.log
 
 startTime=`cat /proc/uptime | cut -d ' ' -f1 | cut -d '.' -f1`
-sed "/$ESH_HEADER_TEXT_1/d;/$ELF_PSEC_STARTOF_TEXT/d;/$ELF_PSEC_ENDOF_TEXT/d;" ${elfs1} | sort -t $'\t' -k3,3 -o ${elfs1}.tmp
-sed "/$ESH_HEADER_TEXT_1/d;/$ELF_PSEC_STARTOF_TEXT/d;/$ELF_PSEC_ENDOF_TEXT/d;" ${elfs2} | sort -t $'\t' -k3,3 -o ${elfs2}.tmp
+sed "/$ESH_HEADER_TEXT_1/d;/$ESH_HEADER_OBJ_1/d" ${elfs1} | sort -t $'\t' -k3,3 -o ${elfs1}.tmp
+sed "/$ESH_HEADER_TEXT_1/d;/$ESH_HEADER_OBJ_1/d" ${elfs2} | sort -t $'\t' -k3,3 -o ${elfs2}.tmp
 comm -12 <(cut -f3 ${elfs1}.tmp | sort -u) <(cut -f3 ${elfs2}.tmp | sort -u) > ${of}.common.names
 
 # find common and specific elf section objects
@@ -153,7 +159,7 @@ fi
 
 # total/common/specific section analysis
 printf "ELFS #1,#2 total/common/specific section analysis                             : %s %s\n" ${of} ${of}.rnk3 | tee -a ${name}.log
-objType="functions"
+objType="objects"
 elfs1Total=$(eshTotalLog ${elfs1}.tmp "ELFS #1 =  total   " "$objType" ${name}.log)
 elfs2Total=$(eshTotalLog ${elfs2}.tmp "ELFS #2 =  total   " "$objType" ${name}.log)
 elfs1Common=$(eshLog ${of}.common 1 "ELFS #1 =  common  " "$objType" ${name}.log)
@@ -216,11 +222,19 @@ if [ "$validation" == "y" ]; then
 fi
 
 # add headers
-[ -s ${of} ] && sed -i "1i$ESH_HEADER_TEXT_2" ${of}
-[ -s ${of}.common ] && sed -i "1i$ESH_HEADER_TEXT_2" ${of}.common
-[ -s ${of}.rnk3 ] && sed -i "1i$ESH_HEADER_TEXT_2" ${of}.rnk3
-[ -s ${of}.specific1 ] && sed -i "1i$ESH_HEADER_TEXT" ${of}.specific1
-[ -s ${of}.specific2 ] && sed -i "1i$ESH_HEADER_TEXT" ${of}.specific2
+if [ "$ofExt" == "ax" ] || [ "$ofExt" == "Ftext" ]; then
+	ESH_HEADER=${ESH_HEADER_TEXT}
+	ESH_HEADER_2=${ESH_HEADER_TEXT_2}
+else
+	ESH_HEADER=${ESH_HEADER_OBJ_1}
+	ESH_HEADER_2=${ESH_HEADER_OBJ_2}
+fi
+
+[ -s ${of} ] && sed -i "1i$ESH_HEADER_2" ${of}
+[ -s ${of}.common ] && sed -i "1i$ESH_HEADER_2" ${of}.common
+[ -s ${of}.rnk3 ] && sed -i "1i$ESH_HEADER_2" ${of}.rnk3
+[ -s ${of}.specific1 ] && sed -i "1i$ESH_HEADER" ${of}.specific1
+[ -s ${of}.specific2 ] && sed -i "1i$ESH_HEADER" ${of}.specific2
 
 # Cleanup
 rm -f ${elfs1}.tmp ${elfs2}.tmp ${of}.common.names ${elfs1}.common ${elfs2}.common
