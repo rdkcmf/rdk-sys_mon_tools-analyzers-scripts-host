@@ -158,7 +158,7 @@ if [ -f ${of}.common ]; then
 fi
 
 # total/common/specific section analysis
-printf "ELFS #1,#2 total/common/specific section analysis                             : %s %s\n" ${of} ${of}.rnk3 | tee -a ${name}.log
+printf "%-75s : %s %s\n" "ELFS #1,#2 total/common/specific section analysis" ${of} ${of}.rnk3 | tee -a ${name}.log
 objType="objects"
 elfs1Total=$(eshTotalLog ${elfs1}.tmp "ELFS #1 =  total   " "$objType" ${name}.log)
 elfs2Total=$(eshTotalLog ${elfs2}.tmp "ELFS #2 =  total   " "$objType" ${name}.log)
@@ -222,7 +222,7 @@ if [ "$validation" == "y" ]; then
 fi
 
 # add headers
-if [ "$ofExt" == "ax" ] || [ "$ofExt" == "Ftext" ]; then
+if [ "$ofExt" == "ax" ]; then
 	ESH_HEADER=${ESH_HEADER_TEXT}
 	ESH_HEADER_2=${ESH_HEADER_TEXT_2}
 else

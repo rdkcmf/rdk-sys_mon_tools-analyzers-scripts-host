@@ -161,7 +161,7 @@ cat ${of}.common <(awk -v NA=$NA '{printf "%-20s\t%-14s\t%09s\t%09s\t%08d\n", $1
 sort -t$'\t' -rnk5 ${of} -o ${of}.rnk5
 
 # total/common/specific section analysis of the original ELF files
-printf "ELF #1,#2 total/common/specific section analysis                             : %s %s\n" ${of} ${of}.rnk5 | tee -a ${name}.log
+printf "%-75s : %s %s\n" "ELF #1,#2 total/common/specific section analysis" ${of} ${of}.rnk5 | tee -a ${name}.log
 objType="sections"
 elf1Total=$(eshTotalLog ${elf1}.esh "ELF #1 =  total   " "$objType" ${name}.log)
 elf2Total=$(eshTotalLog ${elf2}.esh "ELF #2 =  total   " "$objType" ${name}.log)
@@ -222,12 +222,11 @@ if [ ! -z $sections ]; then
 	fi
 
 	rm -f elfSectionCompare.log
-	for ext in Ftext Otext Odata Orodata Odata.rel.ro Obss; do
-		if [ -s ${elf1}.${ext} ] && [ -s ${elf1}.${ext} ]; then
+	for ext in ax Otext Odata Orodata Odata.rel.ro Obss; do
+		if [ -s ${elf1}.${ext} ] && [ -s ${elf2}.${ext} ]; then
 			${path}/elfSectionCompare.sh -1 ${elf1}.${ext} -2 ${elf2}.${ext} -3 ${of}.${ext} $validation -al #> /dev/null
 		fi
 	done
-
 fi
 
 if [ ! -z "$validation" ]; then

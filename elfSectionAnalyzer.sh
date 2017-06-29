@@ -129,6 +129,7 @@ end=$((endst + endsi - 1))
 
 notStripped=$(echo $isElf | grep "not stripped$")
 if [ -z "$notStripped" ]; then
+	# stripped ELF binary analysis
 	# create AX section map file: 1c - start address; 2c - length; (3c - function file offset) not implemented; 4c - function name
 	_err_=$?
 	${objdump} -dC "$elf" | grep "^[[:xdigit:]]\{8\}" | sed 's/ </ /;s/>:$//' | awk '{printf "0x%s\n", $0}' > ${of}.ax.tmp
@@ -148,9 +149,14 @@ if [ -z "$notStripped" ]; then
 	lastFunc=$(tail -1 ${of}.ax.tmp)
 	printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.ax
 
+	# summarize a number of ax section objects and their sizes
+	printf "%-14s : %6s Objects : %s\n" "Sections" " " "Total size of objects" | tee -a ${name}.log
+	eshLog ${of}.ax 2 ${name}.log
+
 	# Cleanup
 	rm -f ${of}.ax.tmp
 else
+	# not-stripped ELF binary analysis
 	${objdump} -tC "$elf" | sort -u | grep "$ODDSFILTER" | tr -s ' ' | cut -d ' ' -f1,3- | sed 's/F ./F/;s/O ./O/;s/\t/ /;s/ /\t/;s/ /\t/;s/ /\t/' | awk -F'\t' '{printf "%-10s\t0x%s\t%09d\t%s\n", $2, $1, strtonum("0x"$3), $4}' > ${of}.odds
 	printf '' | tee ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss
 	while IFS=$'\t' read section therest; do
@@ -158,8 +164,10 @@ else
 	done < ${of}.odds
 	cat ${of}.Ftext <(grep -v "\.text" ${of}.ax-secs) | sort -k1,1 -o ${of}.ax
 
-	# calculate a number of section objects and their sizes
-	for file in ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+	# summarize a number of section objects and their sizes
+	printf "%-14s : %6s Objects : %s\n" "Sections" " " "Total size of objects" | tee -a ${name}.log
+	#for file in ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+	for file in ${of}.ax ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
 		if [ -s ${file} ]; then
 			eshLog ${file} 2 ${name}.log
 		fi
@@ -171,8 +179,8 @@ else
 	cut -f1 ${of}.ax | addr2line -Cp -e ${elf} | paste ${of}.ax - | awk -v mL=$maxExt 'BEGIN {FS="\t"}; {printf "%s\t%s\t%-*s\t%s\n", $1, $2, mL, $3, $4}' >> ${of}.ax.source
 
 	#Cleanup
-#	rm -f ${of}.odds
-	for file in ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+	rm -f ${of}.Ftext
+	for file in ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
 		[ ! -s ${file} ] && rm ${file} || sed -i "1i$ESH_HEADER_OBJ_1" ${file}
 	done
 fi
