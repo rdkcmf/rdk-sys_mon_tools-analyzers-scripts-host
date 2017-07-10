@@ -2,7 +2,8 @@
 #
 
 # Variables:
-ODDSFILTER='F \.text'$'\t'"\|"'O .text'$'\t'"\|"'O \.bss'$'\t'"\|"'O \.data'$'\t'"\|"'O \.rodata'$'\t'"\|"'O .data.rel.ro'$'\t'
+ODDSFILTER='[FO] \.text'$'\t'"\|"'O \.bss'$'\t'"\|"'O \.data'$'\t'"\|"'O \.rodata'$'\t'"\|"'O .data.rel.ro'$'\t'
+ODUSFILTER='[FO ] \*UND\*'$'\t'
 
 # Function: usage
 function usage()
@@ -13,6 +14,7 @@ function usage()
 	echo "${name}# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
 	echo "${name}# -o    : an output file base name"
 	echo "${name}# -al   : append logging"
+	echo "${name}# -u    : produce a list of undefined symbols"
 	echo "${name}# -V    : validate produced data"
 	echo "${name}# -F    : produce function file offsets - not implemented yet"
 	echo "${name}# -h    : display this help and exit"
@@ -32,6 +34,34 @@ function eshLog()
 	fi
 }
 
+# Function: sectionSize
+# $1: elfFile
+# $2: sectionName
+function sectionSize()
+{
+	if [ -s "$1.readelf-S" ]; then
+		grep " \.$2 " "$1.readelf-S" | tr -s '[]' ' ' | tr -s ' ' | cut -d ' ' -f7 | awk '{total += strtonum("0x"$1)} END {printf "%d\n", total}' > "$1"."O$2".space
+	fi	
+}
+
+# Function: validateSection
+# $1: sectionSize
+# $2: sectionFile
+# validateSection $(cat $file.space) $file
+function validateSection()
+{
+	local _sectionSize_=$1
+	local _sectionFile_=$2
+	if [ -s "$_sectionFile_" ]; then
+		local _sectionFileSize_=$(awk '{total += $2} END { printf "%d\n", total} ' $_sectionFile_)
+		if [ "$_sectionSize_" -ne "$_sectionFileSize_" ]; then
+			printf "space/size validation mismatch: space = %9d B : size = %9d B : space-size = %9d B : %s\n" $_sectionSize_ $_sectionFileSize_ $((_sectionSize_-_sectionFileSize_)) $_sectionFile_ | tee -a ${name}.log
+		else
+			printf "space/size validation success : space/size = %9d B : %s\n" $_sectionSize_ $_sectionFile_ | tee -a ${name}.log
+		fi
+	fi	
+}
+
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
@@ -46,6 +76,7 @@ funcFO=
 objdump=
 validation=
 appendLog=
+undSymbols=
 while [ "$1" != "" ]; do
 	case $1 in
 		-e )   shift
@@ -59,10 +90,11 @@ while [ "$1" != "" ]; do
 				;;
 		-al )		appendLog=y
 				;;
-		-V )		validation="y"
+		-u )		undSymbols=y
 				;;
-		-F )   shift
-				funcFO=y
+		-V )		validation=y
+				;;
+		-F )		funcFO=y
 				;;
 		-h | --help )   usage
 				exit
@@ -157,7 +189,12 @@ if [ -z "$notStripped" ]; then
 	rm -f ${of}.ax.tmp
 else
 	# not-stripped ELF binary analysis
-	${objdump} -tC "$elf" | sort -u | grep "$ODDSFILTER" | tr -s ' ' | cut -d ' ' -f1,3- | sed 's/F ./F/;s/O ./O/;s/\t/ /;s/ /\t/;s/ /\t/;s/ /\t/' | awk -F'\t' '{printf "%-10s\t0x%s\t%09d\t%s\n", $2, $1, strtonum("0x"$3), $4}' > ${of}.odds
+	${objdump} -tC "$elf" | sort -u -o ${of}.od-tC
+	grep "$ODDSFILTER" ${of}.od-tC | cut -b1-9,16,19- | tr -s ' ' | sed 's/ /\t/;s/ /\t/' | awk -F'\t' '{printf "%-10s\t0x%s\t%09d\t%s\n", $2, $1, strtonum("0x"$3), $4}' > ${of}.odds
+	if [ ! -z "$undSymbols" ]; then
+		grep "$ODUSFILTER" ${of}.od-tC | cut -b1-9,16,19-21,23- | tr -s ' ' | sed 's/ /\t/;s/ /\t/' | awk -F'\t' '{printf "%-10s\t0x%s\t%09d\t%s\n", $2, $1, strtonum("0x"$3), $4}' > ${of}.odus
+		[ -s ${of}.odus ] && sed -i "1i$ESH_HEADER_ODDS" ${of}.odus
+	fi
 	printf '' | tee ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss
 	while IFS=$'\t' read section therest; do
 		echo "$therest" >> ${of}.${section}
@@ -179,26 +216,46 @@ else
 	cut -f1 ${of}.ax | addr2line -Cp -e ${elf} | paste ${of}.ax - | awk -v mL=$maxExt 'BEGIN {FS="\t"}; {printf "%s\t%s\t%-*s\t%s\n", $1, $2, mL, $3, $4}' >> ${of}.ax.source
 
 	#Cleanup
-	rm -f ${of}.Ftext
-	for file in ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
-		[ ! -s ${file} ] && rm ${file} || sed -i "1i$ESH_HEADER_OBJ_1" ${file}
-	done
+	rm -f ${of}.Ftext ${of}.od-tC
 fi
 
 sort -rnk2 ${of}.ax -o ${of}.ax.rnk2
 
 totalAXSecsSize=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
 totalAXSecsSpace=$((endst + endsi - start))
-if [ "$validation" == "y" ]; then
-	totalAXSecsSizeFile=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax)
-	totalAXSecsSizeRnk2File=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax.rnk2)
-	if [ "$totalAXSecsSpace" -ne "$totalAXSecsSizeFile" ]; then
-		echo "${name}# total AX sections size/space mismatch for ${of}.ax : size = $totalAXSecsSizeFile : space = $totalAXSecsSpace : size - space = $((totalAXSecsSizeFile-totalAXSecsSpace))" | tee -a ${name}.log
-	elif [ "$totalAXSecsSpace" -ne "$totalAXSecsSizeRnk2File" ]; then
-		echo "${name}# total AX sections size/space mismatch for ${of}.ax.rnk2: size = $totalAXSecsSizeRnk2File : space = $totalAXSecsSpace : size - space = $((totalAXSecsSizeFile-totalAXSecsSpace))" | tee -a ${name}.log
+if [ ! -z "$validation" ]; then
+	cat <(cut -f2- ${of}.odds) <(grep -v "\.text" ${of}.ax-secs) | sort -k1,1 -o ${of}.odds.all
+
+	cat /dev/null > ${of}.Total
+	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss ${of}.Otext; do
+		if [ -s ${file} ]; then 
+			cat ${file} >> ${of}.Total
+		fi
+	done
+	sort ${of}.Total -o ${of}.Total
+	eshLog ${of}.Total 2 ${name}.log
+
+	totalCount=$(wc -l ${of}.Total | cut -d ' ' -f1)
+	totalOddsCount=$(wc -l ${of}.odds.all | cut -d ' ' -f1)
+	if [ "$totalCount" -ne "$totalOddsCount" ]; then
+		printf "total/individual obj mismatch : total = %9d indl = %9d : total-indl = %9d\n" $totalCount $totalOddsCount $((totalCount-totalOddsCount)) | tee -a ${name}.log
 	else
-		echo "${name}# : validation success : total AX secs size/space = $totalAXSecsSpace : ${of}.ax ${of}.ax.rnk2" | tee -a ${name}.log
+		printf "total/indl obj split success  : total = %d objects\n" $totalCount | tee -a ${name}.log
 	fi
+
+	for sectionName in "data" "rodata" "data.rel.ro" "bss"; do
+		sectionSize ${of} "$sectionName"
+	done
+
+	printf "%d\n" $totalAXSecsSpace > ${of}.ax.space
+	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+		if [ -s ${file} ] && [ -s ${file}.space ]; then 
+			validateSection $(cat ${file}.space) ${file}
+		fi
+	done
+
+	#Cleanup
+	rm ${of}.*.space ${of}.odds.all
 fi
 
 # add headers
@@ -206,5 +263,11 @@ sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax
 sed -i "1i$ESH_HEADER_TEXT_1" ${of}.ax.rnk2
 sed -i "1i$ESH_HEADER_AXSECS" ${of}.ax-secs
 [ -s ${of}.odds ] && sed -i "1i$ESH_HEADER_ODDS" ${of}.odds
+# ... and clean if needed
+if [ ! -z "$notStripped" ]; then
+	for file in ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+		[ ! -s ${file} ] && rm ${file} || sed -i "1i$ESH_HEADER_OBJ_1" ${file}
+	done
+fi
 printf "%10s%09d/%09d\t%s\n" " " $totalAXSecsSpace $totalAXSecsSize "Total space/size" >> ${of}.ax-secs
 
