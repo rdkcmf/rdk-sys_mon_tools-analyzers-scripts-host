@@ -18,6 +18,11 @@
 # limitations under the License.
 ##########################################################################
 
+# component name to allow any char except forward slash
+COMPREGEXP='\([^/]*\)'
+# full/absolute (not relative) path
+FPATHREGEXP='/\(.*\)\([^/]*\)'
+
 # Function: usage
 function usage()
 {
@@ -28,6 +33,7 @@ function usage()
 	echo "$name# -cf   : a 2 column tab separated component-file map file - mutually exclusive with -fc"
 	echo "$name# -mcm  : a 2 column tab-separated macro-component / component map file"
 	echo "$name# -ca   : componentize all - make not componentized files a part of not-componentized component"
+	echo "$name# -u    : convert input files to unix format before usage"
 	echo "$name# -V    : validation of the produced ouput"
 	echo "$name# -h    : display this help and exit"
 }
@@ -71,6 +77,7 @@ tcFileList=
 cmFileList=
 macroCompMap=
 compAll="n"	#componentize all
+tounix=
 while [ "$1" != "" ]; do
 	case $1 in
 		-f ) 	shift
@@ -89,10 +96,11 @@ while [ "$1" != "" ]; do
 		-mcm ) 	shift
 			macroCompMap=$1
 			;;
-		-ca ) 	shift
-			compAll="y"
+		-ca ) 	compAll="y"
 			;;
 		-V )	validate="y"
+			;;
+		-u )	tounix="y"
 			;;
 		-h| --help)
 			usage
@@ -115,6 +123,10 @@ if [ ! -s "$cmFileList" ]; then
 	echo "$name# ERROR : Component map file list \"$cmFileList\" is empty or not found!"
 	usage
 	exit
+fi
+
+if [ -n "$tounix" ]; then 
+	dos2unix $tcFileList $cmFileList &> /dev/null
 fi
 
 tcCol=$(awk '{printf "%d\n", NF}' $tcFileList | sort -u -n)
@@ -144,6 +156,22 @@ if [ -s $cmFileList.error ]; then
 	exit
 fi
 rm $cmFileList.error
+
+if [ "$ccol" -eq 1 ]; then
+	match=$(grep ^$COMPREGEXP$'\t'$FPATHREGEXP$ ${cmFileList})
+	if [ -z "$match" ]; then
+		echo "$name# ERROR : Component map file list  \"$cmFileList\" doesn't conform to the supported file format!"
+		usage
+		exit
+	fi
+elif [ "$ccol" -eq 2 ]; then
+	match=$(grep ^$FPATHREGEXP$'\t'$COMPREGEXP$ ${cmFileList})
+	if [ -z "$match" ]; then
+		echo "$name# ERROR : Component map file list  \"$cmFileList\" doesn't conform to the supported file format!"
+		usage
+		exit
+	fi
+fi
 
 tcFileListBN=`basename $tcFileList`
 echo "$name : Component Map File          = $cmFileList" | tee -a $name.log
