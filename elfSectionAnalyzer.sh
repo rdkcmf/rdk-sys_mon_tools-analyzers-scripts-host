@@ -16,7 +16,7 @@ function usage()
 	echo "${name}# -al   : append logging"
 	echo "${name}# -u    : produce a list of undefined symbols"
 	echo "${name}# -V    : validate produced data"
-	echo "${name}# -F    : produce function file offsets - not implemented yet"
+	echo "${name}# -F    : produce function file offsets"
 	echo "${name}# -h    : display this help and exit"
 }
 
@@ -45,21 +45,58 @@ function sectionSize()
 }
 
 # Function: validateSection
-# $1: sectionSize
+# $1: sectionSpace
 # $2: sectionFile
-# validateSection $(cat $file.space) $file
 function validateSection()
 {
-	local _sectionSize_=$1
+	local _sectionSpace_=$1
 	local _sectionFile_=$2
+	local _section_=${_sectionFile_#$elf.}
 	if [ -s "$_sectionFile_" ]; then
-		local _sectionFileSize_=$(awk '{total += $2} END { printf "%d\n", total} ' $_sectionFile_)
-		if [ "$_sectionSize_" -ne "$_sectionFileSize_" ]; then
-			printf "space/size validation mismatch: space = %9d B : size = %9d B : space-size = %9d B : %s\n" $_sectionSize_ $_sectionFileSize_ $((_sectionSize_-_sectionFileSize_)) $_sectionFile_ | tee -a ${name}.log
+		local _sectionOSize_=$(awk '{total += $2} END { printf "%d\n", total} ' $_sectionFile_)
+		if [ "$_sectionSpace_" -ne "$_sectionOSize_" ]; then
+			_sectionDiff_=$((_sectionSpace_-_sectionOSize_))
+			printf "%-14s space = %9d B : size = %9d B : space-size = %9d B : (space-size)/space = %f mismatch : %s\n" $_section_ $_sectionSpace_ $_sectionOSize_ $_sectionDiff_ $(echo "$_sectionDiff_ / $_sectionSpace_" | bc -l) ${_sectionFile_}.ssd | tee -a ${name}.log
 		else
-			printf "space/size validation success : space/size = %9d B : %s\n" $_sectionSize_ $_sectionFile_ | tee -a ${name}.log
+			printf "%-14s space/size = %9d B match: %s\n" $_section_ $_sectionSpace_ ${_sectionFile_}.ssd | tee -a ${name}.log
 		fi
 	fi	
+}
+
+# Function: sectionObjSpaceSizeDiff
+# $1: sectionSpace	size of a section
+# $2: inputFile		1st column = section object address	2nd = object size	3rd = object attr
+# $3: outputFile	1st column = section object address	2nd = object space 	3rd = object size	4th = space-size	5th- = object attr
+function sectionObjSpaceSizeDiff()
+{
+	local _sectionSpace_=$1
+	local _inputFile_="$2"
+	local _outputFile_="$3"
+	local _pObjAddr_=
+	local _pObjSize_=
+	local _pObjAttr_=
+	cat /dev/null > ${_outputFile_}
+	while read -r _cObjAddr_ _cObjSize_ _cObjAttr_
+	do
+		_pObjSpace_=$((_cObjAddr_-_pObjAddr_))
+		if [ ! -z "$_pObjAddr_" ]; then 
+			_pObjSize_=$((10#$_pObjSize_))
+			printf "0x%08x\t%09d\t%09d\t%09d\t%s\n" $_pObjAddr_ $_pObjSpace_ $_pObjSize_ $((_pObjSpace_-_pObjSize_)) "$_pObjAttr_" >> ${_outputFile_}
+		fi
+		_pObjAddr_=$_cObjAddr_
+		_pObjSize_=$_cObjSize_
+		_pObjAttr_=$_cObjAttr_
+	done < ${_inputFile_}
+
+	_firstObjAddr=$(head -1 ${_inputFile_} | cut -f1)
+	tail -1 ${_inputFile_} | while read -r _cObjAddr_ _cObjSize_ _cObjAttr_
+	do
+		_cObjSize_=$((10#$_cObjSize_))
+		_cObjSpace_=$((_firstObjAddr+_sectionSpace_-_cObjAddr_))
+		printf "%s\t%09d\t%09d\t%09d\t%s\n" $_cObjAddr_ $_cObjSpace_ $_cObjSize_ $((_cObjSpace_-_cObjSize_)) "$_cObjAttr_" >> ${_outputFile_}
+	done
+
+	sort -rnk4,4 ${_outputFile_} -o ${_outputFile_}
 }
 
 # Main:
@@ -94,7 +131,7 @@ while [ "$1" != "" ]; do
 				;;
 		-V )		validation=y
 				;;
-		-F )		funcFO=y
+		-F )		funcFO='-F'
 				;;
 		-h | --help )   usage
 				exit
@@ -155,16 +192,16 @@ echo "od  = ${objdump}" | tee -a ${name}.log
 # create "start/end of executable sections" file
 grep " AX " ${of}.readelf-S | tr -s '[]' ' ' | tr -s ' ' | cut -d ' ' -f3,5,7 | awk '{printf "0x%s\t%09d\t%s\n", $2, strtonum("0x"$3), $1}' > ${of}.ax-secs
 endst=$(tail -1 ${of}.ax-secs | cut -f1)
-endsi=$(tail -1 ${of}.ax-secs | cut -f2 | awk '{printf "0x%x\n", $1}')
+endsi=$((10#$(tail -1 ${of}.ax-secs | cut -f2)))
 start=$(head -1 ${of}.ax-secs | cut -f1)
 end=$((endst + endsi - 1))
 
 notStripped=$(echo $isElf | grep "not stripped$")
 if [ -z "$notStripped" ]; then
 	# stripped ELF binary analysis
-	# create AX section map file: 1c - start address; 2c - length; (3c - function file offset) not implemented; 4c - function name
+	# create AX section map file: 1c - start address; 2c - length; 4c - function name
 	_err_=$?
-	${objdump} -dC "$elf" | grep "^[[:xdigit:]]\{8\}" | sed 's/ </ /;s/>:$//' | awk '{printf "0x%s\n", $0}' > ${of}.ax.tmp
+	${objdump} -dC $funcFO "$elf" | grep "^[[:xdigit:]]\{8\}" | sed 's/^/0x/;s/ </\t/;s/>:$//' > ${of}.ax.tmp
 	if [ $_err_ != 0 ]; then
 		echo "${name}: Error=$_err_ executing ${objdump} ${elf}. Exit." | tee -a ${name}.log
 		exit 5
@@ -174,12 +211,18 @@ if [ -z "$notStripped" ]; then
 	cat /dev/null > ${of}.ax
 	while read -r cFuncAddr cFuncAttr
 	do
-		[ ! -z "$pFuncAddr" ] && printf "0x%08x\t%09d\t%s\n" $pFuncAddr $((cFuncAddr-pFuncAddr)) "$pFuncName" >> ${of}.ax
+		[ ! -z "$pFuncAddr" ] && printf "0x%08x\t%09d\t%s\n" $pFuncAddr $((cFuncAddr-pFuncAddr)) "$pFuncAttr" >> ${of}.ax
 		pFuncAddr=$cFuncAddr
-		pFuncName=$cFuncAttr
+		pFuncAttr=$cFuncAttr
 	done < ${of}.ax.tmp
 	lastFunc=$(tail -1 ${of}.ax.tmp)
-	printf "%s\t%09d\t%s\n" $(echo $lastFunc | cut -d ' ' -f1) $endsi $(echo $lastFunc | cut -d ' ' -f2-) >> ${of}.ax
+	printf "%s\t%09d\t%s\n" "$(echo $lastFunc | cut -d ' ' -f1)" $endsi "$(echo $lastFunc | cut -d ' ' -f2-)" >> ${of}.ax
+
+	if [ -n "$funcFO" ]; then
+		sed 's/> (File Offset: /\t/;s/)://' ${of}.ax | awk -F'\t' '{printf "%s\t%s\t0x%08x\t%s\n", $1, $2, strtonum($4), $3}' > ${of}.ax.fo
+		cut -f1,2,4 ${of}.ax.fo > ${of}.ax
+		[ "$(cut -f1 ${of}.ax.fo | md5sum | cut -d ' ' -f1)" == "$(cut -f3 ${of}.ax.fo | md5sum | cut -d ' ' -f1)" ] && rm ${of}.ax.fo
+	fi
 
 	# summarize a number of ax section objects and their sizes
 	printf "%-14s : %6s Objects : %s\n" "Sections" " " "Total size of objects" | tee -a ${name}.log
@@ -199,12 +242,16 @@ else
 	while IFS=$'\t' read section therest; do
 		echo "$therest" >> ${of}.${section}
 	done < ${of}.odds
-	cat ${of}.Ftext <(grep -v "\.text" ${of}.ax-secs) | sort -k1,1 -o ${of}.ax
+	cat ${of}.Ftext ${of}.Otext <(grep -v "\.text" ${of}.ax-secs) | sort -k1,1 -o ${of}.ax
+
+	if [ -n "$funcFO" ]; then
+		${objdump} -dCF "$elf" | grep "^[[:xdigit:]]\{8\}" | sed 's/^/0x/;s/ </\t/;s/> (File Offset: /\t/;s/)://' | awk -F'\t' '{printf "%s\t0x%08x\t%s\n", $1, strtonum($3), $2}' > ${of}.ax.fo
+		[ "$(cut -f1 ${of}.ax.fo | md5sum | cut -d ' ' -f1)" == "$(cut -f2 ${of}.ax.fo | md5sum | cut -d ' ' -f1)" ] && rm ${of}.ax.fo
+	fi
 
 	# summarize a number of section objects and their sizes
 	printf "%-14s : %6s Objects : %s\n" "Sections" " " "Total size of objects" | tee -a ${name}.log
-	#for file in ${of}.Ftext ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
-	for file in ${of}.ax ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
 		if [ -s ${file} ]; then
 			eshLog ${file} 2 ${name}.log
 		fi
@@ -216,18 +263,18 @@ else
 	cut -f1 ${of}.ax | addr2line -Cp -e ${elf} | paste ${of}.ax - | awk -v mL=$maxExt 'BEGIN {FS="\t"}; {printf "%s\t%s\t%-*s\t%s\n", $1, $2, mL, $3, $4}' >> ${of}.ax.source
 
 	#Cleanup
-	rm -f ${of}.Ftext ${of}.od-tC
+	rm -f ${of}.Ftext ${of}.Otext ${of}.od-tC
 fi
 
 sort -rnk2 ${of}.ax -o ${of}.ax.rnk2
 
 totalAXSecsSize=$(awk '{total += $2} END { printf "%d\n", total} ' ${of}.ax-secs)
 totalAXSecsSpace=$((endst + endsi - start))
-if [ ! -z "$validation" ]; then
+if [ ! -z "$validation" ] && [ ! -z "$notStripped" ]; then
+	# Total section object validation
 	cat <(cut -f2- ${of}.odds) <(grep -v "\.text" ${of}.ax-secs) | sort -k1,1 -o ${of}.odds.all
-
 	cat /dev/null > ${of}.Total
-	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss ${of}.Otext; do
+	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
 		if [ -s ${file} ]; then 
 			cat ${file} >> ${of}.Total
 		fi
@@ -235,27 +282,45 @@ if [ ! -z "$validation" ]; then
 	sort ${of}.Total -o ${of}.Total
 	eshLog ${of}.Total 2 ${name}.log
 
+	printf "Total/space/size obj  validation:\n" | tee -a ${name}.log
 	totalCount=$(wc -l ${of}.Total | cut -d ' ' -f1)
 	totalOddsCount=$(wc -l ${of}.odds.all | cut -d ' ' -f1)
 	if [ "$totalCount" -ne "$totalOddsCount" ]; then
-		printf "total/individual obj mismatch : total = %9d indl = %9d : total-indl = %9d\n" $totalCount $totalOddsCount $((totalCount-totalOddsCount)) | tee -a ${name}.log
+		printf "Total          = %6d objects - validation failure : section objects = %9d : total-section = %9d\n" $totalCount $totalOddsCount $((totalCount-totalOddsCount)) | tee -a ${name}.log
 	else
-		printf "total/indl obj split success  : total = %d objects\n" $totalCount | tee -a ${name}.log
+		printf "Total          = %6d objects - validation success\n" $totalCount | tee -a ${name}.log
 	fi
+	sed -i "1i$ESH_HEADER_OBJ_1" ${of}.Total
 
+	# Space/size section object validation
 	for sectionName in "data" "rodata" "data.rel.ro" "bss"; do
 		sectionSize ${of} "$sectionName"
 	done
 
 	printf "%d\n" $totalAXSecsSpace > ${of}.ax.space
 	for file in ${of}.ax ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
-		if [ -s ${file} ] && [ -s ${file}.space ]; then 
-			validateSection $(cat ${file}.space) ${file}
+		if [ -s ${file} ] && [ -s ${file}.space ]; then
+			sectionSpace=$(cat ${file}.space)
+			validation=$(validateSection ${sectionSpace} ${file})
+			printf "%s\n" "$validation"
+			mismatch=$(echo "${validation}" | grep "mismatch")
+			if [ -n "$mismatch" ]; then
+				sectionObjSpaceSizeDiff ${sectionSpace} ${file} ${file}.ssd
+				sed -i "1i$ESH_HEADER_SSD" ${file}.ssd
+			fi
 		fi
 	done
 
 	#Cleanup
 	rm ${of}.*.space ${of}.odds.all
+fi
+
+if [ -n "$funcFO" ]; then
+	if [ -s ${of}.ax.fo ]; then
+		printf "Function offs  = %s\n" ${of}.ax.fo | tee -a ${name}.log
+	else
+		printf "Function offs  = %s\n" ${of}.ax | tee -a ${name}.log
+	fi
 fi
 
 # add headers
@@ -265,7 +330,7 @@ sed -i "1i$ESH_HEADER_AXSECS" ${of}.ax-secs
 [ -s ${of}.odds ] && sed -i "1i$ESH_HEADER_ODDS" ${of}.odds
 # ... and clean if needed
 if [ ! -z "$notStripped" ]; then
-	for file in ${of}.Otext ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
+	for file in ${of}.Odata ${of}.Orodata ${of}.Odata.rel.ro ${of}.Obss; do
 		[ ! -s ${file} ] && rm ${file} || sed -i "1i$ESH_HEADER_OBJ_1" ${file}
 	done
 fi
