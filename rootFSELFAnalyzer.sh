@@ -46,6 +46,110 @@ function logFile()
 	fi
 }
 
+# Function: rootFSElfAnalyzer:
+# $1 - $rootFS name
+# $2 - $rootFS folder
+# $3 - $rootFS ELF file list to analyze
+# $4 - $rootFS ELF output file list
+# $5 - $rootFS log
+# rootFSElfAnalyzer ${rootFS} ${rootFS}.elf ${rootFS}.files.elf.analyze.short ${rootFS}.files.so.refed ${rootFS}.elf.log
+# rootFSElfAnalyzer ${rootFS} ${rootFS}.nss ${rootFS}.files.nss.short ${rootFS}.files.nss ${rootFS}.nss.log
+function rootFSElfAnalyzer()
+{
+	rootFSN=$1
+	rootFSElfFolder=$2
+	rootFSElfFileList=$3
+	rootFSElfRefed=$4
+	rootFSElfLog=$5
+
+	rm -rf ${rootFSElfFolder}
+	mkdir -p ${rootFSElfFolder}
+	rm -f ${rootFSElfLog}
+
+	while read entryElf
+	do
+		elfName=$(echo ${entryElf} | tr '/' '%')
+		echo "${entryElf}:" >> ${rootFSElfLog}
+
+		# build a list of all referenced referenced/"needed" shared library objects from all/used executables
+		${objdump} -x ${sub}${entryElf} | grep "NEEDED" | tr -s ' ' | cut -d ' ' -f3 > ${rootFSN}.files.elf.refed.odump
+
+		iter=0
+		ln -sf ${rootFSN}.files.elf.refed.odump ${rootFSElfRefed}.link
+		while [ -s ${rootFSElfRefed}.link ]; do
+			cat /dev/null > ${rootFSElfRefed}.$iter.short
+
+			# find all references in the objdump output
+			cat /dev/null > ${rootFSN}.files.elf.odump.find
+			while read entry
+			do
+				find ${sub} -name ${entry} > ${rootFSN}.files.elf.odump.find.tmp
+				[ -s ${rootFSN}.files.elf.odump.find.tmp ] && cat ${rootFSN}.files.elf.odump.find.tmp >> ${rootFSN}.files.elf.odump.find || printf "%1d: unresolved entry: %s\n" $iter ${entry/$sub/} >> ${rootFSElfLog}
+			done < ${rootFSN}.files.elf.refed.odump
+
+			while read entry
+			do
+				entryHResolved=$(readlink -e ${entry})
+				if [ "${entry}HResolved" != "" ]; then
+					entryShort=${entryHResolved/$sub/}
+					echo "$entryShort" >> ${rootFSElfRefed}.$iter.short
+				else
+					printf "%1d: unresolved  link: %s\n" $iter ${entry/$sub/} >> ${rootFSElfLog}
+				fi
+			done < ${rootFSN}.files.elf.odump.find
+			sort -u ${rootFSElfRefed}.$iter.short -o ${rootFSElfRefed}.$iter.short
+
+			if [ "$iter" -eq 0 ]; then
+				cat ${rootFSElfRefed}.$iter.short > ${rootFSElfFolder}/${elfName}
+				ln -sf ${rootFSElfRefed}.$iter.short ${rootFSElfRefed}.link
+			else
+				comm -13 ${rootFSElfRefed}.$((iter-1)).short ${rootFSElfRefed}.$iter.short > ${rootFSElfRefed}.uniq.short
+				cat ${rootFSElfRefed}.uniq.short >> ${rootFSElfFolder}/${elfName}
+				ln -sf ${rootFSElfRefed}.uniq.short ${rootFSElfRefed}.link
+			fi
+	
+			if [ "$outputCtr" == "all" ]; then
+				while read entry
+				do
+					printf "%1d: %s\n" ${iter} ${entry} >> ${rootFSElfLog}
+				done < ${rootFSElfRefed}.link
+			fi
+
+			cat /dev/null > ${rootFSN}.files.elf.refed.odump
+			while read entry
+			do
+				${objdump} -x ${sub}${entry} | grep "NEEDED" | tr -s ' ' | cut -d ' ' -f3 >> ${rootFSN}.files.elf.refed.odump
+			done < ${rootFSElfRefed}.link
+			sort -u ${rootFSN}.files.elf.refed.odump -o ${rootFSN}.files.elf.refed.odump
+
+			iter=`expr $iter + 1`
+		done
+		[ -e ${rootFSElfFolder}/${elfName} ] && sort -u ${rootFSElfFolder}/${elfName} -o ${rootFSElfFolder}/${elfName}
+		[ "$outputCtr" == "all" ] && echo "" >> ${rootFSElfLog}
+	done < ${rootFSElfFileList}
+
+	# build ${rootFSElfRefed}
+	if [ "$(ls -A ${rootFSElfFolder})" != "" ]; then
+		cat ${rootFSElfFolder}/* | sort -u -o ${rootFSElfRefed}.short
+		rm -f ${rootFSElfRefed}.log
+		if [ -s ${rootFSElfRefed}.short ]; then
+			while read entry
+			do
+				grep -r "${entry}" ${rootFSElfFolder} | cut -d ':' -f1 | tr '%' '/' | sort > ${rootFSN}.files.elf.entry
+				printf "%4d %s:\n" $(wc -l ${rootFSN}.files.elf.entry | cut -d ' ' -f1) ${entry} >> ${rootFSElfRefed}.log
+				while read refed
+				do
+					printf "%4c \t\t%s\n" " " ${refed/"${rootFSElfFolder}/"/} >> ${rootFSElfRefed}.log
+				done < ${rootFSN}.files.elf.entry
+			done < ${rootFSElfRefed}.short
+			rm ${rootFSN}.files.elf.entry
+		fi
+	else
+		cat /dev/null > ${rootFSElfRefed}.short
+	fi
+	flsh2lo ${rootFSElfRefed}.short ${rootFSN}.files.so.all ${rootFSElfRefed}
+}
+
 # Main:
 cmdline="$0 $@"
 name=`basename $0 .sh`
@@ -117,36 +221,38 @@ if [ -n "${exeList}" ]; then
 	sort -u ${exeList} -o ${exeList}.short
 fi
 
-# It's assumed that a shell pointed to by a /bin/sh link defines a platform type.
-elf=${rfsFolder}$(readlink ${rfsFolder}/bin/sh)
-# Check if an elf object exists
-if [ ! -e "${elf}" ]; then
-	echo "${name} : ERROR : ${elf} file not found!" | tee -a ${name}.log
-	usage
-	exit
-fi
+if [ -z "${objdump}" ]; then
+	# It's assumed that a shell pointed to by a /bin/sh link defines a platform type.
+	elf=${rfsFolder}$(readlink ${rfsFolder}/bin/sh)
+	# Check if an elf object exists
+	if [ ! -e "${elf}" ]; then
+		echo "${name} : ERROR : ${elf} file not found!" | tee -a ${name}.log
+		usage
+		exit
+	fi
 
-# Check if an elf object
-isElf="$(file -b "${elf}" | grep "^ELF ")"
-if [ -z "${isElf}" ]; then
-	echo "${name} : ERROR  : ${elf} is NOT an ELF file!" | tee -a ${name}.log
-	usage
-	exit
-fi
+	# Check if an elf object
+	isElf="$(file -b "${elf}" | grep "^ELF ")"
+	if [ -z "${isElf}" ]; then
+		echo "${name} : ERROR  : ${elf} is NOT an ELF file!" | tee -a ${name}.log
+		usage
+		exit
+	fi
 
-# Check if a supported ELF object architechture
-elfArch=$(echo "${isElf}" | cut -d, -f2)
-if [ ! -z "$(echo "${elfArch}" | grep "MIPS")" ]; then
-	[ -z ${objdump} ] && objdump=mipsel-linux-objdump
-elif [ ! -z "$(echo "${elfArch}" | grep "Intel .*86")" ]; then
-	[ -z ${objdump} ] && objdump=i686-cm-linux-objdump
-elif [ ! -z "$(echo "${elfArch}" | grep "ARM")" ]; then
-	[ -z ${objdump} ] && objdump=armeb-rdk-linux-uclibceabi-objdump
-else
-	echo "${name}# ERROR : unsupported architechture : ${elfArch}" | tee -a ${name}.log
-	echo "${name}# ERROR : supported architechtures  = {ARM | MIPS | x86}" | tee -a ${name}.log
-	usage
-	exit
+	# Check if the ${elf} ELF object architechture is supported
+	elfArch=$(echo "${isElf}" | cut -d, -f2)
+	if [ ! -z "$(echo "${elfArch}" | grep "MIPS")" ]; then
+		[ -z ${objdump} ] && objdump=mipsel-linux-objdump
+	elif [ ! -z "$(echo "${elfArch}" | grep "Intel .*86")" ]; then
+		[ -z ${objdump} ] && objdump=i686-cm-linux-objdump
+	elif [ ! -z "$(echo "${elfArch}" | grep "ARM")" ]; then
+		[ -z ${objdump} ] && objdump=armeb-rdk-linux-uclibceabi-objdump
+	else
+		echo "${name}# ERROR : unsupported architechture : ${elfArch}" | tee -a ${name}.log
+		echo "${name}# ERROR : supported architechtures  = {ARM | MIPS | x86}" | tee -a ${name}.log
+		usage
+		exit
+	fi
 fi
 
 # Check if the PATH to $objdump is set
@@ -156,7 +262,7 @@ if [ -z "$(which ${objdump})" ]; then
 	exit
 fi
 if [ ! -e "${rfsFolder}/version.txt" ]; then
-	echo "${name}# WARNING: ${rfsFolder}/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
+	echo "${name}# Warn  : ${rfsFolder}/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
 	rootFS=`basename ${rfsFolder}`
 else
 	rootFS=`cat ${rfsFolder}/version.txt | grep -i imagename |  tr ': =' ':' | cut -d ':' -f2`
@@ -207,7 +313,9 @@ if [ -n "$exeExtAnalysis" ]; then
 	while read filename
 	do
 		_err_=$?
-		main=$(${objdump} -dC "${rfsFolder}/${filename}" | grep "^[[:xdigit:]]\{8\} <main>:")
+		#main=$(${objdump} -dC "${rfsFolder}/${filename}" | grep "^[[:xdigit:]]\{8\} <main>:")
+		#main=$(${objdump} -TC "${rfsFolder}/${filename}" | cut -f2 | tr -s ' ' | cut -d ' ' -f3- | grep "^main$\|^\.hidden main$")
+		main=$(${objdump} -TC "${rfsFolder}/${filename}" | cut -f2 | cut -b 23- | grep "^main$\|^\.hidden main$")
 		if [ $_err_ != 0 ]; then
 			echo "${name}: Error=$_err_ executing ${objdump} -dC ${rfsFolder}/${filename}. Exit." | tee -a ${name}.log
 			exit 
@@ -218,14 +326,14 @@ if [ -n "$exeExtAnalysis" ]; then
 		sort ${rootFS}.files.exe-as-so.all.short -o ${rootFS}.files.exe-as-so.all.short
 
 		# Remove shared objects from the ${rootFS}.files.exe-as-so.all.short list
-		grep "\.so" ${rootFS}.files.exe-as-so.all.short > ${rootFS}.files.so.withmain.short
-		if [ -s ${rootFS}.files.so.withmain.short ]; then
-			comm -23 ${rootFS}.files.exe-as-so.all.short ${rootFS}.files.so.withmain.short > ${rootFS}.files.exe-as-so.all.short.tmp
-			flsh2lo ${rootFS}.files.so.withmain.short ${rootFS}.files.all ${rootFS}.files.so.withmain
+		grep "\.so" ${rootFS}.files.exe-as-so.all.short > ${rootFS}.files.so.with-main.short
+		if [ -s ${rootFS}.files.so.with-main.short ]; then
+			comm -23 ${rootFS}.files.exe-as-so.all.short ${rootFS}.files.so.with-main.short > ${rootFS}.files.exe-as-so.all.short.tmp
+			flsh2lo ${rootFS}.files.so.with-main.short ${rootFS}.files.all ${rootFS}.files.so.with-main
 
 			mv ${rootFS}.files.exe-as-so.all.short.tmp ${rootFS}.files.exe-as-so.all.short
 		fi
-		rm ${rootFS}.files.so.withmain.short
+		rm ${rootFS}.files.so.with-main.short
 
 		# Add ${rootFS}.files.exe-as-so.all.short to ${rootFS}.files.exe.all.short
 		cat ${rootFS}.files.exe-as-so.all.short >> ${rootFS}.files.exe.all.short
@@ -237,8 +345,8 @@ if [ -n "$exeExtAnalysis" ]; then
 		flsh2lo ${rootFS}.files.exe-as-so.all.short ${rootFS}.files.all ${rootFS}.files.exe-as-so.all
 
 		logFile ${rootFS}.files.exe-as-so.all "Executables as shared object files" ${name}.log
-		if [ -s ${rootFS}.files.so.withmain ]; then
-			logFile ${rootFS}.files.so.withmain "Shared object with main() files" ${name}.log
+		if [ -s ${rootFS}.files.so.with-main ]; then
+			logFile ${rootFS}.files.so.with-main "Shared object with main() files" ${name}.log
 		fi
 	fi
 	# Cleanup
@@ -298,124 +406,60 @@ else
 	ln -sf ${rootFS}.files.exe.all.short ${rootFS}.files.elf.analyze.short
 fi
 
-rootFSELF=${rootFS}.elf
-rm -rf ${rootFSELF}
-mkdir -p ${rootFSELF}
-
-rm -f ${rootFS}.elf.log
-while read entryElf
-do
-	elfName=$(echo ${entryElf} | tr '/' '%')
-	echo "${entryElf}:" >> ${rootFS}.elf.log
-
-	# build a list of all referenced referenced/"needed" shared library objects from all/used executables
-	${objdump} -x ${sub}${entryElf} | grep "NEEDED" | tr -s ' ' | cut -d ' ' -f3 > ${rootFS}.files.elf.refed.odump
-
-	iter=0
-	ln -sf ${rootFS}.files.elf.refed.odump ${rootFS}.files.so.refed.link
-	while [ -s ${rootFS}.files.so.refed.link ]; do
-		cat /dev/null > ${rootFS}.files.so.refed.$iter.short
-
-		# find all references in the objdump output
-		cat /dev/null > ${rootFS}.files.elf.odump.find
-		while read entry
-		do
-			find ${sub} -name ${entry} > ${rootFS}.files.elf.odump.find.tmp
-			[ -s ${rootFS}.files.elf.odump.find.tmp ] && cat ${rootFS}.files.elf.odump.find.tmp >> ${rootFS}.files.elf.odump.find || printf "%1d: unresolved entry: %s\n" $iter ${entry/$sub/} >> ${rootFS}.elf.log
-		done < ${rootFS}.files.elf.refed.odump
-
-		while read entry
-		do
-			entryHResolved=$(readlink -e ${entry})
-			if [ "${entry}HResolved" != "" ]; then
-				entryShort=${entryHResolved/$sub/}
-				echo "$entryShort" >> ${rootFS}.files.so.refed.$iter.short
-			else
-				printf "%1d: unresolved  link: %s\n" $iter ${entry/$sub/} >> ${rootFS}.elf.log
-			fi
-		done < ${rootFS}.files.elf.odump.find
-		sort -u ${rootFS}.files.so.refed.$iter.short -o ${rootFS}.files.so.refed.$iter.short
-
-		if [ "$iter" -eq 0 ]; then
-			cat ${rootFS}.files.so.refed.$iter.short > ${rootFSELF}/${elfName}
-			ln -sf ${rootFS}.files.so.refed.$iter.short ${rootFS}.files.so.refed.link
-		else
-			comm -13 ${rootFS}.files.so.refed.$((iter-1)).short ${rootFS}.files.so.refed.$iter.short > ${rootFS}.files.so.refed.uniq.short
-			cat ${rootFS}.files.so.refed.uniq.short >> ${rootFSELF}/${elfName}
-			ln -sf ${rootFS}.files.so.refed.uniq.short ${rootFS}.files.so.refed.link
-		fi
-	
-		if [ "$outputCtr" == "all" ]; then
-			while read entry
-			do
-				printf "%1d: %s\n" ${iter} ${entry} >> ${rootFS}.elf.log
-			done < ${rootFS}.files.so.refed.link
-		fi
-
-		cat /dev/null > ${rootFS}.files.elf.refed.odump
-		while read entry
-		do
-			${objdump} -x ${sub}${entry} | grep "NEEDED" | tr -s ' ' | cut -d ' ' -f3 >> ${rootFS}.files.elf.refed.odump
-		done < ${rootFS}.files.so.refed.link
-		sort -u ${rootFS}.files.elf.refed.odump -o ${rootFS}.files.elf.refed.odump
-
-		iter=`expr $iter + 1`
-	done
-	[ -e ${rootFSELF}/${elfName} ] && sort -u ${rootFSELF}/${elfName} -o ${rootFSELF}/${elfName}
-	[ "$outputCtr" == "all" ] && echo "" >> ${rootFS}.elf.log
-done < ${rootFS}.files.elf.analyze.short
-
-# build ${rootFS}.files.so.refed
-if [ "$(ls -A ${rootFSELF})" != "" ]; then
-	cat ${rootFSELF}/* | sort -u -o ${rootFS}.files.so.refed.short
-	rm -f ${rootFS}.elf.refed.log
-	if [ -s ${rootFS}.files.so.refed.short ]; then
-		while read entry
-		do
-			grep -r "${entry}" ${rootFSELF} | cut -d ':' -f1 | tr '%' '/' | sort > ${rootFS}.files.elf.entry
-			printf "%4d %s:\n" $(wc -l ${rootFS}.files.elf.entry | cut -d ' ' -f1) ${entry} >> ${rootFS}.elf.refed.log
-			while read refed
-			do
-				printf "%4c \t\t%s\n" " " ${refed/"${rootFSELF}/"/} >> ${rootFS}.elf.refed.log
-			done < ${rootFS}.files.elf.entry
-		done < ${rootFS}.files.so.refed.short
-		rm ${rootFS}.files.elf.entry
-	fi
-else
-	cat /dev/null > ${rootFS}.files.so.refed.short
-fi
-flsh2lo ${rootFS}.files.so.refed.short ${rootFS}.files.so.all ${rootFS}.files.so.refed
+rfsELFFolder=${rootFS}.elf
+rootFSElfAnalyzer ${rootFS} ${rootFS}.elf ${rootFS}.files.elf.analyze.short ${rootFS}.files.so.refed ${rootFS}.elf.log
 
 # build ${rootFS}.files.so.unrefed
 comm -13 ${rootFS}.files.so.refed.short ${rootFS}.files.so.all.short > ${rootFS}.files.so.unrefed.short
 flsh2lo ${rootFS}.files.so.unrefed.short ${rootFS}.files.so.all ${rootFS}.files.so.unrefed
 
-if [ -s ${usedFiles}.missing.short ]; then
-	logFile ${usedFiles}.missing.short "Warning: Missing files" ${name}.log
-fi
+# missing requested files if any
+[ -s ${usedFiles}.missing.short ] && echo "${name}# Warn  : There are missing files in ${usedFiles} : ${usedFiles}.missing.short" | tee -a ${name}.log
 
 # all/used/unused executables
 logFile ${rootFS}.files.exe.all "All executable files" ${name}.log
-if [ -s ${rootFS}.files.exe.used ]; then
-	logFile ${rootFS}.files.exe.used "Used executable files" ${name}.log
-fi
-if [ -s ${rootFS}.files.exe.unused ]; then
-	logFile ${rootFS}.files.exe.unused "Unused executable files" ${name}.log
-fi
+[ -s ${rootFS}.files.exe.used ] && logFile ${rootFS}.files.exe.used "Used executable files" ${name}.log
+[ -s ${rootFS}.files.exe.unused ] && logFile ${rootFS}.files.exe.unused "Unused executable files" ${name}.log
+
 # all/used/unused shared library objects
 logFile ${rootFS}.files.so.all "All shared object files" ${name}.log
-if [ -s ${rootFS}.files.so.used ]; then
-	logFile ${rootFS}.files.so.used "Used shared object files" ${name}.log
-fi
-if [ -s ${rootFS}.files.so.unused ]; then
-	logFile ${rootFS}.files.so.unused "Unused shared object files" ${name}.log
-fi
+[ -s ${rootFS}.files.so.used ] && logFile ${rootFS}.files.so.used "Used shared object files" ${name}.log
+[ -s ${rootFS}.files.so.unused ] && logFile ${rootFS}.files.so.unused "Unused shared object files" ${name}.log
+
 # refed/unrefed shared library objects
-if [ -s ${rootFS}.files.so.refed ]; then
-	logFile ${rootFS}.files.so.refed "Referenced shared object files" ${name}.log
-fi
-if [ -s ${rootFS}.files.so.unrefed ]; then
-	logFile ${rootFS}.files.so.unrefed "Unreferenced shared object files" ${name}.log
+[ -s ${rootFS}.files.so.refed ] && logFile ${rootFS}.files.so.refed "Referenced shared object files" ${name}.log
+[ -s ${rootFS}.files.so.unrefed ] && logFile ${rootFS}.files.so.unrefed "Unreferenced shared object files" ${name}.log
+
+if [ -e "${rfsFolder}/etc/nsswitch.conf" ]; then
+	echo "NSS dynamically loaded shared object analysis:" | tee -a ${name}.log
+
+	cat /dev/null > ${rootFS}.files.nss.short
+	cat /dev/null > ${rootFS}.files.nss.not-found
+	sed '/^#/d;/^$/d;s/^.*://;s/^ *//g;s/[.*]//g' ${rfsFolder}/etc/nsswitch.conf | tr ' ' '\n' | sort -u -o ${rootFS}.files.nss-services
+	while read service
+	do
+		lib=$(find "${rfsFolder}" -type f -name "libnss_${service}*")
+		[ -n "${lib}" ] && echo "${lib}" | sed "s:$sub::" >> ${rootFS}.files.nss.short || echo "libnss_${service}*.so" >> ${rootFS}.files.nss.not-found
+	done < ${rootFS}.files.nss-services
+
+	printf "%-36s : %5d : %*c : %s\n" "All NSS services" $(wc -l ${rootFS}.files.nss-services | cut -d ' ' -f1) 39 " " "${rootFS}.files.nss-services" | tee -a ${name}.log
+	if [ -s ${rootFS}.files.nss.short ]; then
+		rootFSElfAnalyzer ${rootFS} ${rootFS}.nss ${rootFS}.files.nss.short ${rootFS}.files.nss.deps ${rootFS}.nss.log
+		flsh2lo ${rootFS}.files.nss.short ${rootFS}.files.so.all ${rootFS}.files.nss
+		cat ${rootFS}.files.nss.deps ${rootFS}.files.nss | sort -u -k9 -o ${rootFS}.files.nss+deps
+		fllo2sh ${rootFS}.files.nss+deps ${rootFS}.files.nss+deps.short
+		join -j 9 ${rootFS}.files.nss+deps ${rootFS}.files.so.unrefed -o 1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8,1.9 > ${rootFS}.files.nss.non-redundant
+		
+		logFile ${rootFS}.files.nss "Found NSS shared object files" ${name}.log
+		logFile ${rootFS}.files.nss+deps "NSS shared object files & deps " ${name}.log
+		logFile ${rootFS}.files.nss.non-redundant "NSS added non redundant shared objs" ${name}.log
+	fi
+
+	if [ -s ${rootFS}.files.nss.not-found ]; then
+		printf "%-36s : %5d : %*c : %s\n" "Not found NSS shared object files" $(wc -l ${rootFS}.files.nss.not-found | cut -d ' ' -f1) 39 " " "${rootFS}.files.nss.not-found" | tee -a ${name}.log
+	else
+		rm ${rootFS}.files.nss.not-found
+	fi
 fi
 
 if [ -n "$validation" ]; then
@@ -486,23 +530,34 @@ if [ -n "$validation" ]; then
 		fi
 	done
 
-	find ${rootFSELF} -type f | sed "s:${rootFSELF}/::" | sort -u -o ${rootFS}.procs.all
+	find ${rfsELFFolder} -type f | sed "s:${rfsELFFolder}/::" | sort -u -o ${rootFS}.procs.all
 	find ${psortFolder} -type f | sed "s:${psortFolder}/::" | sort -u -o ${rootFS}.procs.rt
 	comm -12 ${rootFS}.procs.all ${rootFS}.procs.rt > ${rootFS}.procs.analyze
 	comm -13 ${rootFS}.procs.all ${rootFS}.procs.rt > ${rootFS}.procs.rt-spec
 
 	cat /dev/null > ${rootFS}.procs.analyze.ident
 	cat /dev/null > ${rootFS}.procs.analyze.diff
+	cat /dev/null > ${rootFS}.procs.analyze.diff.nss
 	while read filename
 	do
-		md5s1=$(md5sum ${rootFSELF}/${filename} | cut -d ' ' -f1)
+		md5s1=$(md5sum ${rfsELFFolder}/${filename} | cut -d ' ' -f1)
 		md5s2=$(md5sum ${psortFolder}/${filename} | cut -d ' ' -f1)
 		if [ "$md5s1" == "$md5s2" ]; then
 			#echo "$md5s1 ${filename}" >> ${rootFS}.procs.analyze.ident
 			echo "${filename}" >> ${rootFS}.procs.analyze.ident
 		else
 			#echo "$md5s1 $md5s2 ${filename}" >> ${rootFS}.procs.analyze.diff
-			echo "${filename}" >> ${rootFS}.procs.analyze.diff
+			if [ -s ${rootFS}.files.nss+deps.short ]; then
+				comm -23 ${psortFolder}/${filename} ${rfsELFFolder}/${filename} > ${rootFS}.procs.diff.tmp
+				if [ -z "$(comm -23 ${rootFS}.procs.diff.tmp ${rootFS}.files.nss+deps.short)" ]; then
+					mv ${rootFS}.procs.diff.tmp ${rfsELFFolder}/${filename}.nss
+					echo "${filename}" >> ${rootFS}.procs.analyze.diff.nss
+				else
+					echo "${filename}" >> ${rootFS}.procs.analyze.diff
+				fi
+			else
+				echo "${filename}" >> ${rootFS}.procs.analyze.diff
+			fi
 		fi
 	done < ${rootFS}.procs.analyze
 
@@ -519,15 +574,20 @@ if [ -n "$validation" ]; then
 	#grep -v "\[.*\]" ${psefwFile} | grep -v " ps " > ${psefwFile}.paramed
 	#printf "Parameterized processes              : %5d : %s\n" $(( $(wc -l ${psefwFile}.paramed | cut -d ' ' -f1) - 1)) "${psefwFile}.paramed" | tee -a ${name}.log
 	printf "/proc/<pid>/maps processes           : %5d : %s\n" $(wc -l ${rootFS}.procs.rt | cut -d ' ' -f1) "${rootFS}.procs.rt" | tee -a ${name}.log
-	printf "Analyzed processes                   : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze | cut -d ' ' -f1) "${rootFS}.procs.analyze" | tee -a ${name}.log
+	printf "Analyzed / not-redundant processes   : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze | cut -d ' ' -f1) "${rootFS}.procs.analyze" | tee -a ${name}.log
 	printf "Run-time redundant processes         : %5d : %s\n" $(wc -l ${rootFS}.procs.rt-spec | cut -d ' ' -f1) "${rootFS}.procs.rt-spec" | tee -a ${name}.log
 	printf "Validated processes                  : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze.ident | cut -d ' ' -f1) "${rootFS}.procs.analyze.ident" | tee -a ${name}.log
+	if [ -s "${rootFS}.procs.analyze.diff.nss" ]; then
+		printf "NSS validated processes              : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze.diff.nss | cut -d ' ' -f1) "${rootFS}.procs.analyze.diff.nss" | tee -a ${name}.log
+	fi
 	printf "Not validated processes              : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze.diff | cut -d ' ' -f1) "${rootFS}.procs.analyze.diff" | tee -a ${name}.log
 	printf "Processes with libdl-2.19.so refs    : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze.diff.libdl | cut -d ' ' -f1) "${rootFS}.procs.analyze.diff.libdl" | tee -a ${name}.log
-	printf "Processes with no libdl-2.19.so refs : %5d : %s\n" $(wc -l ${rootFS}.procs.analyze.diff.not-libdl | cut -d ' ' -f1) "${rootFS}.procs.analyze.diff.not-libdl" | tee -a ${name}.log
+	notlibdlProcs=$(wc -l ${rootFS}.procs.analyze.diff.not-libdl | cut -d ' ' -f1)
+	printf "Processes with no libdl-2.19.so refs : %5d : %s\n" ${notlibdlProcs} "${rootFS}.procs.analyze.diff.not-libdl" | tee -a ${name}.log
+	[ "${notlibdlProcs}" == "0" ] && printf "All not libdl-2.19.so refed processes are validated !\n" || printf "There are %d not libdl-2.19.so refed processes!\n" ${notlibdlProcs}
 
 	# Cleanup
-	rm ${rootFS}.pid-name
+	rm -f ${rootFS}.pid-name ${rootFS}.procs.diff.tmp
 fi
 
 # Cleanup
@@ -536,6 +596,7 @@ rm -f ${rootFS}.files.so.refed.* ${rootFS}.files.so.unrefed.*
 rm -f ${rootFS}.files.all.short
 rm -f ${rootFS}.files.so.all.short ${rootFS}.files.so.used.short ${rootFS}.files.so.unused.short
 rm -f ${rootFS}.files.exe.all.short ${rootFS}.files.exe.used.short  ${rootFS}.files.exe.unused.short
+rm -f ${rootFS}.files.nss*.short ${rootFS}.files.nss.deps.link
 rm -f ${usedFiles}.short
 [ -e ${usedFiles}.missing.short ] && [ ! -s ${usedFiles}.missing.short ] && rm ${usedFiles}.missing.short
 
