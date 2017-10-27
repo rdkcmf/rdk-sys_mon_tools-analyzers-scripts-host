@@ -7,7 +7,7 @@ rpath="/"             # root/search/file path
 vfile="/version.txt"  # version.txt file
 
 # Function: usage
-function usage()
+usage()
 {
 	echo "$name# Usage : `basename $0 .sh` [ {-s|-v|-a} [-r file/folder]] | [-h]"
 	echo "$name# Target RootFS regular file usage analyzer based on access info"
@@ -19,7 +19,7 @@ function usage()
 }
 
 # Function: vdate2epoch
-function vdate2epoch()
+vdate2epoch()
 {
 	local vdate_day="$3"
 	local vdate_time="$4"
@@ -63,7 +63,7 @@ SH2LO_PATTERN=$SH2LO_L3_PATTERN
 # $1: input file list file in short format
 # $2: input file list pattern file in long format
 # $3: output file list file in long format
-function flsh2lo()
+flsh2lo()
 {
 	cat /dev/null > $3
 	sed -e "$SPEC_CHAR_PATTERN" $1 | while read -r
@@ -130,9 +130,10 @@ if [ ! -e "$vfile" ]; then
 	exit
 fi
 
-if [ "$(md5sum ${rpath}/version.txt | cut -d ' ' -f1)" != "$(md5sum ${vfile} | cut -d ' ' -f1)" ]; then
-	echo "$name# WARN  : Using ${vfile} instead of ${rpath}/version.txt"
-	exit
+if [ -e ${rpath}/version.txt ]; then
+	if [ "$(md5sum ${rpath}/version.txt | cut -d ' ' -f1)" != "$(md5sum ${vfile} | cut -d ' ' -f1)" ]; then
+		echo "$name# WARNING : Using ${vfile} instead of ${rpath}/version.txt"
+	fi
 fi
 
 if [ ! -e "${lpath}" ]; then
@@ -209,14 +210,16 @@ if [ "$options" == "-a" ]; then
 		# all used files
 		if [ -s "${lpath}/${rootFS}.ts.used.short" ]; then
 			flsh2lo ${lpath}/${rootFS}.ts.used.short ${lpath}/${rootFS}.files.all ${lpath}/${rootFS}.ts.used
+		else
+			cat /dev/null > ${lpath}/${rootFS}.ts.used
 		fi
-		touch ${lpath}/${rootFS}.ts.used
 
 		# all unused files
 		if [ -s "${lpath}/${rootFS}.ts.unused.short" ]; then
 			flsh2lo ${lpath}/${rootFS}.ts.unused.short ${lpath}/${rootFS}.files.all ${lpath}/${rootFS}.ts.unused
+		else
+			cat /dev/null > ${lpath}/${rootFS}.ts.unused
 		fi
-		touch ${lpath}/${rootFS}.ts.unused
 		echo "done"
 
 		awk '{total += $5} END { printf "Total          : %5d files : %10d B / %9.2f KB / %6.2f MB\n", NR, total, total/1024, total/(1024*1024) }' ${lpath}/${rootFS}.files.all | tee -a ${lpath}/${rootFS}.ts.log
