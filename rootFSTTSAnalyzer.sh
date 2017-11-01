@@ -150,7 +150,8 @@ buildTimeEpoch=$(vdate2epoch ${buildTimeStamp})
 echo "$cmdline" > ${lpath}/${rootFS}.ts.log
 echo "$name: rootFS       = ${rootFS} : options = $options" | tee -a ${lpath}/${rootFS}.ts.log
 echo "$name: timestamp    = \"${buildTimeStamp}\" / ${buildTimeEpoch}" | tee -a ${lpath}/${rootFS}.ts.log
-echo "$name: root path    = ${rpath}" | tee -a ${lpath}/${rootFS}.ts.log
+[ -d "${rpath}" ] && target="folder" || target="file"
+printf "%s: %-12s = %s\n" "$name" "${target}" "${rpath}" | tee -a ${lpath}/${rootFS}.ts.log
 echo "$name: log path     = ${lpath}" | tee -a ${lpath}/${rootFS}.ts.log
 echo "$name: version file = $vfile" | tee -a ${lpath}/${rootFS}.ts.log
 echo "" | tee -a ${lpath}/${rootFS}.ts.log
@@ -174,29 +175,30 @@ find "${rpath}" -xdev -type f -exec stat -c"%X %x %n" {} \; | sort -k5 > ${lpath
 echo "done"
 
 if [ "$options" == "-s" ] || [ "$options" == "-v" ]; then
-        grep -v "${buildTimeEpoch}" ${lpath}/${rootFS}.ts.files.stat.all > ${lpath}/${rootFS}.ts.dontmatch.txt
-        if [ -s "${lpath}/${rootFS}.ts.dontmatch.txt" ]; then
-                echo "$name# WARNING: timestamp has not been set successfully for `wc -l ${lpath}/${rootFS}.ts.dontmatch.txt | cut -d ' ' -f1` file(s)!" | tee -a ${lpath}/${rootFS}.ts.log
-                echo "$name# WARNING: a file list with not expected timestamps is in the ${lpath}/${rootFS}.ts.dontmatch.txt" | tee -a ${lpath}/${rootFS}.ts.log
-        else
-                rm ${lpath}/${rootFS}.ts.dontmatch.txt
-                echo "$name: timestamp has been set successfully!" | tee -a ${lpath}/${rootFS}.ts.log
-        fi
+	grep -v "^${buildTimeEpoch} " ${lpath}/${rootFS}.ts.files.stat.all > ${lpath}/${rootFS}.ts.dontmatch.txt
+	if [ -s "${lpath}/${rootFS}.ts.dontmatch.txt" ]; then
+		echo "$name# WARNING: timestamp has not been set successfully for `wc -l ${lpath}/${rootFS}.ts.dontmatch.txt | cut -d ' ' -f1` file(s)!" | tee -a ${lpath}/${rootFS}.ts.log
+		echo "$name# WARNING: a file list with not expected timestamps is in the ${lpath}/${rootFS}.ts.dontmatch.txt" | tee -a ${lpath}/${rootFS}.ts.log
+	else
+		rm ${lpath}/${rootFS}.ts.dontmatch.txt
+		echo "$name: timestamp has been set successfully!" | tee -a ${lpath}/${rootFS}.ts.log
+	fi
 fi
 
 if [ "$options" == "-a" ]; then
 	echo -e "$name: analyzing  data ... \c"
 
 	if [ ! -d "${rpath}" ]; then
-		filestat=$(grep ${buildTimeEpoch} ${lpath}/${rootFS}.ts.files.stat.all)
-		filename=$(cat ${lpath}/${rootFS}.ts.files.stat.all | cut -d ' ' -f4)
+		# a file analysis
+		filestat=$(grep "^${buildTimeEpoch} " ${lpath}/${rootFS}.ts.files.stat.all)
+		filename=$(cat ${lpath}/${rootFS}.ts.files.stat.all | cut -d ' ' -f5)
 		echo "done"
 		if [ "${filestat}" == "" ]; then
-			echo "$name: ${rpath} file is used" | tee -a ${lpath}/${rootFS}.ts.log
+			echo "$name: \"${rpath}\" file is used" | tee -a ${lpath}/${rootFS}.ts.log
 			ls -la ${filename} > ${lpath}/${rootFS}.ts.used
 			rm -f ${lpath}/${rootFS}.ts.unused
 		else
-			echo "$name: ${rpath} file is NOT used" | tee -a ${lpath}/${rootFS}.ts.log
+			echo "$name: \"${rpath}\" file is NOT used" | tee -a ${lpath}/${rootFS}.ts.log
 			ls -la ${filename} > ${lpath}/${rootFS}.ts.unused
 			rm -f ${lpath}/${rootFS}.ts.used
 		fi
@@ -204,7 +206,7 @@ if [ "$options" == "-a" ]; then
 		# all files
 		find "${rpath}" -xdev -type f -exec ls -la {} \; | tr -s ' ' | sort -u -k9 > ${lpath}/${rootFS}.files.all
 		cat ${lpath}/${rootFS}.files.all | tr -s ' ' | cut -d ' ' -f9- | sort > ${lpath}/${rootFS}.files.all.short
-		grep -v ${buildTimeEpoch} ${lpath}/${rootFS}.ts.files.stat.all | cut -d ' ' -f4 | sort > ${lpath}/${rootFS}.ts.used.short
+		grep -v "^${buildTimeEpoch} " ${lpath}/${rootFS}.ts.files.stat.all | cut -d ' ' -f5 | sort > ${lpath}/${rootFS}.ts.used.short
 		cat ${lpath}/${rootFS}.files.all.short ${lpath}/${rootFS}.ts.used.short | sort | uniq -u > ${lpath}/${rootFS}.ts.unused.short
 
 		# all used files
