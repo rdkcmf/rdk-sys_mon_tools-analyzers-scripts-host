@@ -47,11 +47,7 @@ function fileFormat()
 # $3: output file list file in long format
 function flsh2lo()
 {
-	cat /dev/null > $3
-	sed -e "$SPEC_CHAR_PATTERN" $1 | while read -r
-	do
-		grep "$SH2LO_PATTERN $REPLY\$" $2 >> $3
-	done
+	join -1 1 -2 9 $1 $2 -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7,2.8,2.9 > $3
 }
 
 # Function: fllo2sh - file list conversion from long to short format
@@ -117,7 +113,7 @@ function rootFSFLBV()
 			_rootFS_=`basename $_rfsDescr_`
 			#echo "$name# WARNING: $_rfsDescr_/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
 		else
-			_rootFS_=`cat $_rfsDescr_/version.txt | grep -i imagename |  tr ': =' ':' | cut -d ':' -f2`
+			_rootFS_=`cat $_rfsDescr_/version.txt | grep -i "^imagename" |  tr ': =' ':' | cut -d ':' -f2`
 		fi
 
 		_path_=$0
