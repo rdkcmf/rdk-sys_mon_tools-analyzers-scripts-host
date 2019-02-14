@@ -25,6 +25,7 @@ function usage()
 	echo "$name# Usage : `basename $0 .sh` [-r folder -e elf -l symlist [-od name]] | [-h]"
 	echo "$name# Finds source locations of references to symbols; requires env PATH set to platform tools with objdump"
 	echo "$name# -r    : a mandatory rootFS folder"
+	echo "$name# -rdbg : an optional rootFS dbg folder with symbolic info"
 	echo "$name# -e    : a mandatory target elf (exe/so) object - mutually exclusive with -el"
 	echo "$name# -el   : a mandatory target elf (exe/so) object list"
 	echo "$name# -s    : a mandatory single symbol - mutually exclusive with -sl"
@@ -56,6 +57,7 @@ fi
 . "$path"/rootFSElfAnalyzerCommon.sh
 
 rfsFolder=
+rdbgFolder=
 elf=
 elfList=
 sym=
@@ -65,6 +67,9 @@ while [ "$1" != "" ]; do
 	case $1 in
 		-r | --root )	shift
 				rfsFolder="$1"
+				;;
+		-rdbg )		shift
+				rdbgFolder="$1"
 				;;
 		-e | --elf )	shift
 				elf="$1"
@@ -84,7 +89,7 @@ while [ "$1" != "" ]; do
 		-h | --help )	usage
 				exit $ERR_NOT_A_ERROR
 				;;
-		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!"
+		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!" | tee -a "$name".log
 				usage
 				exit $ERR_UNKNOWN_PARAM
 	esac
@@ -92,25 +97,31 @@ while [ "$1" != "" ]; do
 done
 
 if [ -z "$rfsFolder" ] || [ ! -d "$rfsFolder" ]; then
-	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!"
+	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!" | tee -a "$name".log
+	usage
+	exit $ERR_PARAM_NOT_SET
+fi
+
+if [ -n "$rdbgFolder" ] && [ ! -d "$rdbgFolder" ]; then
+	echo "$name# ERROR : rootFS dbg folder \"$rfsFolder\" is set but not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
 
 if [ -n "$elf" ] && [ -n "$elfList" ]; then
-	echo "$name# ERROR : -e and -el options are mutually exclusive!"
+	echo "$name# ERROR : -e and -el options are mutually exclusive!" | tee -a "$name".log
 	usage
 	exit $ERR_OBJ_NOT_VALID
 elif [ -n "$elf" ] && [ ! -e "$rfsFolder"/"$elf" ]; then
-	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!"
+	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -n "$elfList" ] && [ ! -e "$elfList" ]; then
-	echo "$name# ERROR : elf reference file \"$elfList\" is not found!"
+	echo "$name# ERROR : elf reference file \"$elfList\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -z "$elf" ] && [ -z "$elfList" ]; then
-	echo "$name# ERROR : Either an elf object or elf list options \"-e / -el\" must be set!"
+	echo "$name# ERROR : Either an elf object or elf list options \"-e / -el\" must be set!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
@@ -119,7 +130,7 @@ if [ -n "$elfList" ]; then
 	while read entry
 	do
 		if [ ! -e "$rfsFolder/$entry" ]; then
-			echo "$name# ERROR : elf object \"$rfsFolder/$entry\" in the \"$elfList\" list is not found!"
+			echo "$name# ERROR : elf object \"$rfsFolder/$entry\" in the \"$elfList\" list is not found!" | tee -a "$name".log
 			usage
 			exit $ERR_OBJ_NOT_VALID
 		fi
@@ -127,15 +138,15 @@ if [ -n "$elfList" ]; then
 fi
 
 if [ -n "$symList" ] && [ -n "$sym" ]; then
-	echo "$name# ERROR : -s and -sl options are mutually exclusive!"
+	echo "$name# ERROR : -s and -sl options are mutually exclusive!" | tee -a "$name".log
 	usage
 	exit $ERR_OBJ_NOT_VALID
 elif [ -n "$symList" ] && [ ! -e "$symList" ]; then
-	echo "$name# ERROR : elf symbol list file \"$symList\" is not found!"
+	echo "$name# ERROR : elf symbol list file \"$symList\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -z "$sym" ] && [ -z "$symList" ]; then
-	echo "$name# ERROR : Either symbol or symbol list file options \"-s / -sl\" must be set!"
+	echo "$name# ERROR : Either symbol or symbol list file options \"-s / -sl\" must be set!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
@@ -186,13 +197,14 @@ fi
 
 
 if [ ! -e "$rfsFolder"/version.txt ]; then
-	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
+	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name" | tee -a "$name".log
 	rootFS=`basename $rfsFolder`
 else
 	rootFS=`grep -i "^imagename" $rfsFolder/version.txt |  tr ': =' ':' | cut -d ':' -f2`
 fi
 
 echo "$name : rfsFolder  = $rfsFolder"    | tee -a "$name".log
+echo "$name : rdbgFolder = $rdbgFolder" | tee -a "$name".log
 if [ -n "$elf" ]; then 
 	echo "$name : elf        = $elf"     | tee -a "$name".log
 else
@@ -257,7 +269,7 @@ pfx=""
 
 # _elfSymRefSources "$_rfsFolder" "$_elf" "$symListFile" "locationBase"
 #_elfSymRefSources "$rfsFolder" "$elfFile" "$symFile" "$odTCDFUNDFolder/$elfBase"
-_elfSymRefSources "$rfsFolder" "$elfFile" "$symFile" "$odTCDFUNDFolder"/ "$pfx"
+_elfSymRefSources "$rfsFolder" "$elfFile" "$symFile" "$odTCDFUNDFolder"/ "$pfx" "$rdbgFolder"
 if [ -n "$sym" ] || [ -n "$elf" ]; then
 	cat "$odTCDFUNDFolder/$elfBase$pfx".log | tee -a "$name".log
 else

@@ -24,6 +24,7 @@ function usage()
 	echo "$name# Usage : `basename $0 .sh` -r folder [[-e file] | [-l file]] [-od name] | [-h]"
 	echo "$name# Target RootFS NSS single ELF object analyzer, requires env PATH set to platform tools with objdump"
 	echo "$name# -r    : a mandatory rootFS folder"
+	echo "$name# -rdbg : an optional rootFS dbg folder with ELF symbolic info"
 	echo "$name# -e    : a mandatory target elf (exe/so) object"
 	echo "$name# -cache: \"use cache\" option; default - cache is not used, all file folders are removed"
 	echo "$name# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
@@ -54,6 +55,7 @@ fi
 . "$path"/rootFSElfAnalyzerCommon.sh
 
 rfsFolder=
+rdbgFolder=
 elf=
 cache=
 
@@ -61,6 +63,9 @@ while [ "$1" != "" ]; do
 	case $1 in
 		-r | --root )	shift
 				rfsFolder="$1"
+				;;
+		-rdbg )		shift
+				rdbgFolder="$1"
 				;;
 		-e | --elf )	shift
 				elf="$1"
@@ -73,7 +78,7 @@ while [ "$1" != "" ]; do
 		-h | --help )	usage
 				exit $ERR_NOT_A_ERROR
 				;;
-		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!"
+		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!" | tee -a "$name".log
 				usage
 				exit $ERR_UNKNOWN_PARAM
 	esac
@@ -81,17 +86,23 @@ while [ "$1" != "" ]; do
 done
 
 if [ -z "$rfsFolder" ] || [ ! -d "$rfsFolder" ]; then
-	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!"
+	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!" | tee -a "$name".log
+	usage
+	exit $ERR_PARAM_NOT_SET
+fi
+
+if [ -n "$rdbgFolder" ] && [ ! -d "$rdbgFolder" ]; then
+	echo "$name# ERROR : rootFS dbg folder \"$rfsFolder\" is set but not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
 
 if [ -z "$elf" ]; then
-	echo "$name# ERROR : elf object name is not set!"
+	echo "$name# ERROR : elf object name is not set!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ ! -e "$rfsFolder"/"$elf" ]; then
-	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!"
+	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
@@ -138,15 +149,15 @@ else
 	fi
 fi
 
-
 if [ ! -e "$rfsFolder"/version.txt ]; then
-	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
+	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name" | tee -a "$name".log
 	rootFS=`basename $rfsFolder`
 else
 	rootFS=`grep -i "^imagename" $rfsFolder/version.txt |  tr ': =' ':' | cut -d ':' -f2`
 fi
 
 echo "$name : rfsFolder = $rfsFolder" | tee -a "$name".log
+echo "$name : rdbgFoledr= $rdbgFolder" | tee -a "$name".log
 echo "$name : objdump   = $objdump"   | tee -a "$name".log
 echo "$name : path      = $path"      | tee -a "$name".log
 echo "$name : rootFS    = $rootFS"    | tee -a "$name".log
@@ -174,8 +185,8 @@ startTime=`cut -d ' ' -f1 /proc/uptime | cut -d '.' -f1`
 
 outFile=$(echo "$elf" | tr '/' '%')
 
-_rootFSBuildNssCache "$rfsFolder"
-_rootFSNssElfAnalyzer "$rfsFolder" "$elf" "$rfsNssFolder/$outFile"
+_rootFSBuildNssCache "$rfsFolder" "$rdbgFolder"
+_rootFSNssElfAnalyzer "$rfsFolder" "$elf" "$rfsNssFolder/$outFile" "$rdbgFolder"
 
 endTime=`cut -d ' ' -f1 /proc/uptime | cut -d '.' -f1`
 execTime=`expr $endTime - $startTime`
