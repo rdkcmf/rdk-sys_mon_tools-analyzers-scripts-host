@@ -26,6 +26,7 @@ function usage()
 	echo "$name# Usage : `basename $0 .sh` -r folder {[-e file] | [-l file]} [-od name] [-dl file] [-il] [-w folder] | [-h]"
 	echo "$name# Target RootFS dynamically linked single ELF object analyzer, requires env PATH set to platform tools with objdump"
 	echo "$name# -r    : a mandatory rootFS folder"
+	echo "$name# -rdbg : an optional rootFS dbg folder with ELF symbolic info"
 	echo "$name# -e    : a mandatory target elf (exe/so) object - mutually exclusive with -l"
 	echo "$name# -l    : a mandatory elf reference file - mutually exclusive with -e"
 	echo "$name# -dl   : an optional libdl api to verify; default is \"$libdlDefault\" all"
@@ -60,6 +61,7 @@ fi
 . "$path"/rootFSElfAnalyzerCommon.sh
 
 rfsFolder=
+rdbgFolder=
 wFolder=
 elf=
 elfRefs=
@@ -71,6 +73,9 @@ while [ "$1" != "" ]; do
 	case $1 in
 		-r | --root )	shift
 				rfsFolder="$1"
+				;;
+		-rdbg )		shift
+				rdbgFolder="$1"
 				;;
 		-e | --elf )	shift
 				elf="$1"
@@ -94,7 +99,7 @@ while [ "$1" != "" ]; do
 		-h | --help )	usage
 				exit $ERR_NOT_A_ERROR
 				;;
-		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!"
+		* )		echo "$name# ERROR : unknown parameter  \"$1\" in the command argument list!" | tee -a "$name".log
 				usage
 				exit $ERR_UNKNOWN_PARAM
 	esac
@@ -102,31 +107,37 @@ while [ "$1" != "" ]; do
 done
 
 if [ -z "$rfsFolder" ] || [ ! -d "$rfsFolder" ]; then
-	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!"
+	echo "$name# ERROR : rootFS folder \"$rfsFolder\" is not set or found!" | tee -a "$name".log
+	usage
+	exit $ERR_PARAM_NOT_SET
+fi
+
+if [ -n "$rdbgFolder" ] && [ ! -d "$rdbgFolder" ]; then
+	echo "$name# ERROR : rootFS dbg folder \"$rfsFolder\" is set but not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
 
 if [ -n "$elf" ] && [ -n "$elfRefs" ]; then
-	echo "$name# ERROR : -e and -l options are mutually exclusive!"
+	echo "$name# ERROR : -e and -l options are mutually exclusive!" | tee -a "$name".log
 	usage
 	exit $ERR_OBJ_NOT_VALID
 elif [ -n "$elf" ] && [ ! -e "$rfsFolder"/"$elf" ]; then
-	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!"
+	echo "$name# ERROR : elf object \"$rfsFolder/$elf\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -n "$elfRefs" ] && [ ! -e "$elfRefs" ]; then
-	echo "$name# ERROR : elf reference file \"$elfRefs\" is not found!"
+	echo "$name# ERROR : elf reference file \"$elfRefs\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -z "$elf" ] && [ -z "$elfRefs" ]; then
-	echo "$name# ERROR : Either elf object or elf reference file via -e / -l options must be set!"
+	echo "$name# ERROR : Either elf object or elf reference file via -e / -l options must be set!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
 
 if [ -n "$libdlApi" ] && [ ! -e "$libdlApi" ]; then
-	echo "$name# ERROR : libdlApi file \"$libdlApi\" is not found!"
+	echo "$name# ERROR : libdlApi file \"$libdlApi\" is not found!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
@@ -176,13 +187,14 @@ else
 fi
 
 if [ ! -e "$rfsFolder"/version.txt ]; then
-	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name"
+	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name" | tee -a "$name".log
 	rootFS=`basename $rfsFolder`
 else
 	rootFS=`grep -i "^imagename" $rfsFolder/version.txt |  tr ': =' ':' | cut -d ':' -f2`
 fi
 
 echo "$name : rfsFolder = $rfsFolder" | tee -a "$name".log
+echo "$name : rdbgFolder= $rdbgFolder" | tee -a "$name".log
 echo "$name : objdump   = $objdump"   | tee -a "$name".log
 echo "$name : path      = $path"      | tee -a "$name".log
 echo "$name : rootFS    = $rootFS"    | tee -a "$name".log
@@ -229,7 +241,7 @@ if [ -n "$libdlApi" ]; then
 	#validate requested libdlApi
 	comm -12 <(cut -f2- "$odTCDFtextFolder/$libdlDefaultP".odTC-DFtext) <(sort -u "$libdlApi") > "$odTCDFtextFolder"/libdlApi
 	if [ ! -s "$odTCDFtextFolder"/libdlApi ]; then
-		echo "$name# ERROR : libdlApi file \"$libdlApi\" is not valid!"
+		echo "$name# ERROR : libdlApi file \"$libdlApi\" is not valid!" | tee -a "$name".log
 		usage
 		exit $ERR_OBJ_NOT_VALID
 	fi
@@ -237,7 +249,7 @@ else
 	cut -f2- "$odTCDFtextFolder/$libdlDefaultP".odTC-DFtext | sort -u -o "$odTCDFtextFolder"/libdlApi
 fi
 
-echo "$name: dlapi   = $(cat "$odTCDFtextFolder"/libdlApi | tr '\n' ' ')" | tee -a "$name".log
+echo "$name : dlapi   = $(cat "$odTCDFtextFolder"/libdlApi | tr '\n' ' ')" | tee -a "$name".log
 
 startTime=`cut -d ' ' -f1 /proc/uptime | cut -d '.' -f1`
 
@@ -254,8 +266,9 @@ else
 	iterLog=""
 fi
 
-#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name : $5 - work folder : $6 - libdl deps : $7 - iter log
-_rootFSDLinkElfAnalyzer "$rfsFolder" "$elf" "$elfRefs" "$rfsDLinkFolder/$outFile" "$wFolderPfx" "libdl" "$iterLog"
+#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
+#: $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
+_rootFSDLinkElfAnalyzer "$rfsFolder" "$elf" "$elfRefs" "$rfsDLinkFolder/$outFile" "$wFolderPfx" "libdl" "$rdbgFolder" "$iterLog"
 
 if [ -s "$outFile".error ]; then
 	echo "$name # Warn      : Unresolved reference present! See $outFile.error" | tee -a "$name".log
