@@ -167,6 +167,24 @@ function _buildElfDFtextTable()
 	"$objdump" -TC "$_rfsFolder/$_elf" | grep "^[[:xdigit:]]\{8\}.*\{6\}DF .text" | sed 's/ \+/ /g;s/\t/ /' | cut -d ' ' -f1,7- | sed 's/ /\t/1' | sort -u | sort -t$'\t' -k2,2 -o "$_out"
 }
 
+# Function: _buildElfDFUNDtTable:
+# input:
+# $1 - rootFS folder
+# $2 - an elf object name
+# $3 - an output file name
+# Use cases:
+#_rootFSDLoadElfAnalyzer:
+#_rootFSNssSingleElfAnalyzer:	
+function _buildElfDFUNDtTable()
+{
+	local _rfsFolder="$1"
+	local _elf="$2"
+	local _out="$3"
+
+	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" "$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elf" "$_elf" "out" "$_out"
+	"$objdump" -TC "$_rfsFolder/$_elf" | grep "^[[:xdigit:]]\{8\}.*\{6\}DF \*UND\*" | cut -f2 | cut -b23- | sed 's/^[0-9]* //;/^$/d'| sort -u -o "$_out"
+}
+
 # Function: _mkWFolder:
 # input:
 # $1 - work folder name to make/remake : removes the requested folder if safe to remove
@@ -202,6 +220,34 @@ function _mkWFolder()
 	echo "$_wFolderPfx"
 }
 
+# Function: _getElfDbgPath
+# Input:
+# $1 - rootFS folder
+# $2 - target ELF filename
+# $3 - rootFS dbg folder
+# $4 - output file name - needed to log "missing" status in "$_out".dbg-missing file
+# output:
+# std out - Elf's dbg path if $3 is set, otherwise Elf's path
+function _getElfDbgPath()
+{
+	local _rfsFolder="$1"
+	local _elf="$2"
+	local _rdbgFolder="$3"
+	local _out="$4"
+
+	local _elfPath=
+	if [ -n "$_rdbgFolder" ]; then
+		_elfPath="$_rdbgFolder"/$(dirname "$_elf")/.debug/$(basename "$_elf")
+		if [ ! -e "$_elfPath" ]; then
+			[ -n "$_out" ] && echo "$_elfPath" >> "$_out".dbg-missing
+			_elfPath="$_rfsFolder/$_elf"
+		fi
+	else
+		_elfPath="$_rfsFolder/$_elf"
+	fi
+	echo "$_elfPath"
+}
+
 # Function: _sraddr2line
 # Input:
 # $1 - rootFS folder
@@ -209,6 +255,7 @@ function _mkWFolder()
 # $3 - symbol reference list file to analyze; all symbols are analyzed if the name is empty
 # $4 - output file name
 # $5 - rootFS dbg folder
+# $6 - an optional service type - nss, libdlapi or none if empty
 # Output:
 # "symbol name - source code location" structured file
 # "symbol name - source code location" log =<output file name>.log
@@ -222,18 +269,23 @@ function _sraddr2line()
 	local _symList="$3"
 	local _out="$4"
 	local _rdbgFolder="$5"
+	local _service="$6"
 
-	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n\n" \
-	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elf" "$_elf" "symList" "$_symList" "out" "$_out" "rdbgFolder" "$_rdbgFolder"
+	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n\n" \
+	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elf" "$_elf" "symList" "$_symList" "out" "$_out" "rdbgFolder" "$_rdbgFolder" "service" "$_service"
 
-	# Build symbol file
-	#sed '1,/Global entries:/d' <(readelf -A "$_rfsFolder/$_elf") | grep " FUNC " | sed '1d;s/^ .//;/^$/d' | tr -s ' ' | tr ' ' '\t' | sort -t$'\t' -k7,7 -o "$_out".gentry.all
-	sed '1,/Global entries:/d' <(readelf -AW "$_rfsFolder/$_elf" | c++filt) | grep " FUNC " | sed '1d;s/^ .//;/^$/d' | sed 's/ \+/ /g;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1' | sort -t$'\t' -k7,7 -o "$_out".gentry.all
+	# Build a symbol file if it's not built
+	if [ ! -s "$_out".gentry.all ]; then
+		sed '1,/Global entries:/d' <(readelf -AW "$_rfsFolder/$_elf" | c++filt) | grep " FUNC " | sed '1d;s/^ .//;/^$/d' | \
+			sed 's/ \+/ /g;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1' | sort -t$'\t' -k7,7 -o "$_out".gentry.all
+	fi
 
-	if [ -n "$_symList" ]; then
-		join -t$'\t' -1 1 -2 7 <(sort "$_symList") "$_out".gentry.all -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7 > "$_out".gentry.user
-	else
-		ln -sf "$PWD/$_out".gentry.all "$_out".gentry.user
+	if [ ! -e "$_out$_service".gentry.user ]; then
+		if [ -n "$_symList" ]; then
+			join -t$'\t' -1 1 -2 7 <(sort "$_symList") "$_out".gentry.all -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7 > "$_out$_service".gentry.user
+		else
+			ln -sf "$PWD/$_out".gentry.all "$_out$_service".gentry.user
+		fi
 	fi
 
 	# Disassemble the elf
@@ -241,25 +293,16 @@ function _sraddr2line()
 		"$objdump" -dC "$_rfsFolder/$_elf" > "$_out".dC
 	fi
 
-	# Find source code locations of symbol refs
-	# init a path from a dbg folder if set
-	local _elfPath=
-	if [ -n "$_rdbgFolder" ]; then
-		_elfPath="$_rdbgFolder"/$(dirname "$_elf")/.debug/$(basename "$_elf")
-		if [ ! -e "$_elfPath" ]; then
-			echo "$_elfPath" >> "$_out".dbg-missing
-			_elfPath="$_rfsFolder/$_elf"
-		fi
-	else
-		_elfPath="$_rfsFolder/$_elf"
-	fi
+	# Find source code locations of symbol refs; init a path from a dbg folder if set
+	local _elfPath=$(_getElfDbgPath "$_rfsFolder" "$_elf" "$_rdbgFolder" "$_out")
 	#echo "_elfPath = $_elfPath"
+
 	while IFS=$'\t' read _addr _access _initial _symval _type _ndx _name
 	do
 		grep -w -- "$_access" "$_out".dC | cut -f1 | cut -d ':' -f1 > "$_out.usr.$_name"
 		addr2line -Cpfa -e "$_elfPath" @"$_out.usr.$_name" | cut -d ' ' -f2- > "$_out.usr.$_name.tmp"
 		mv "$_out.usr.$_name.tmp" "$_out.usr.$_name"
-	done < "$_out".gentry.user
+	done < "$_out$_service".gentry.user
 }
 
 # Input:
@@ -272,8 +315,8 @@ function _sraddr2line()
 # Output:
 
 # Use cases:
-#_rootFSDLinkElfAnalyzer: _elfSymRefSources "$_rfsFolder" "$_out".libdl "$odTCDFtextFolder"/libdlApi "$rfsLibdlFolder" ".dlink.libdl" "$_rdbgFolder"
-#_rootFSDLoadElfAnalyzer: _elfSymRefSources "$_rfsFolder" "$_outElfBase".file "$_outElfBase".sym "$odTCDFUNDFolder/" "" "$_rdbgFolder"
+#_rootFSDLinkElfAnalyzer: _elfSymRefSources "$_rfsFolder" "$_out".libdl "$odTCDFtextFolder"/libdlApi "$rfsLibdlFolder" ".dlink.libdl" "$_rdbgFolder" ".libdl"
+#_rootFSDLoadElfAnalyzer: _elfSymRefSources "$_rfsFolder" "$_outElfBase".file "$_outElfBase".sym "$odTCDFUNDFolder/" "" "$_rdbgFolder" ".libdl"
 function _elfSymRefSources
 {
 	local _rfsFolder="$1"
@@ -282,9 +325,10 @@ function _elfSymRefSources
 	local _out="$4"
 	local _pfx="$5"
 	local _rdbgFolder="$6"
+	local _service="$7"
 
-	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" \
-	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elfList" "$_elfList" "symList" "$_symList" "out" "$_out" "pfx" "$_pfx" "_rdbgFolder" "$_rdbgFolder"
+	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" \
+	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elfList" "$_elfList" "symList" "$_symList" "out" "$_out" "pfx" "$_pfx" "rdbgFolder" "$_rdbgFolder" "service" "$_service"
 
 	local _elf=
 	while read _elf
@@ -293,11 +337,11 @@ function _elfSymRefSources
 		local _log="$_out/$_elfP$_pfx".log
 		local _none=true
 
-		if [ -s "$odTCDFUNDFolder/$_elfP".gentry.user ]; then
-			#printf "%s: skipping %s\n" "$FUNCNAME" "$odTCDFUNDFolder/$_elfP"
+		if [ -s "$odTCDFUNDFolder/$_elfP$_service".gentry.user ]; then
+			#printf "%s: skipping %s\n" "$FUNCNAME" "$odTCDFUNDFolder/$_elfP$_service".gentry.user >> "$name".log
 			continue
 		fi
-		_sraddr2line "$_rfsFolder" "$_elf" "$_symList" "$odTCDFUNDFolder/$_elfP" "$_rdbgFolder"
+		_sraddr2line "$_rfsFolder" "$_elf" "$_symList" "$odTCDFUNDFolder/$_elfP" "$_rdbgFolder" "$_service"
 
 		local _ref=
 		cat /dev/null > "$_log"
@@ -516,8 +560,8 @@ function _rootFSDLinkElfAnalyzer()
 		sort -u "$_out".libdl -o "$_out".libdl
 		if [ -e "$odTCDFtextFolder"/libdlApi ]; then
 			if [ ! -s "$rfsLibdlFolder"/"$_out".libdl.log ]; then
-				# _elfSymRefSources "rfsFolder" "elf list"    "symbol list"                "out folder"      "postfix"      "dbg folder"
-				_elfSymRefSources "$_rfsFolder" "$_out".libdl "$odTCDFtextFolder"/libdlApi "$rfsLibdlFolder" ".dlink.libdl" "$_rdbgFolder"
+				# _elfSymRefSources "rfsFolder" "elf list"    "symbol list"                "out folder"      "postfix"      "dbg folder"   "service"
+				_elfSymRefSources "$_rfsFolder" "$_out".libdl "$odTCDFtextFolder"/libdlApi "$rfsLibdlFolder" ".dlink.libdl" "$_rdbgFolder" ".libdl"
 			else
 				printf "skipping $rfsLibdlFolder/$_out.libdl.log generation !\n"
 			fi
@@ -605,7 +649,7 @@ function _rootFSBuildNssCache()
 # Input:
 # $1 - rootFS folder
 # $2 - target ELF
-# $3 - an output file name
+# $3 - an output file name base
 # $4 - rootFS dbg folder
 # $5 - a log
 # Output:
@@ -629,7 +673,7 @@ function _rootFSNssSingleElfAnalyzer()
 
 	# build a list of elf's UND symbols (if not built) and compare it with nss api
 	if [ ! -s "$odTCDFUNDFolder/$_elfP".odTC-DFUND ]; then
-		"$objdump" -TC "$_rfsFolder/$_elf" | grep "^[[:xdigit:]]\{8\}.*\{6\}DF \*UND\*" | cut -f2 | tr -s ' ' | cut -d ' ' -f3- | sort -u -o "$odTCDFUNDFolder/$_elfP".odTC-DFUND
+		_buildElfDFUNDtTable "$_rfsFolder" "$_elf" "$odTCDFUNDFolder/$_elfP".odTC-DFUND
 	fi
 	
 	cat /dev/null > "$_nssOut"
@@ -640,8 +684,8 @@ function _rootFSNssSingleElfAnalyzer()
 		comm -12 "$rfsNssFolder/$_nss_service_api" "$odTCDFUNDFolder/$_elfP".odTC-DFUND > "$rfsNssFolder/$_elfP.$_nss_service_api.deps"
 		if [ -s "$rfsNssFolder/$_elfP.$_nss_service_api.deps" ]; then
 			printf "\t%s\t:\n" "$_nss_service_api" >> "$_nssOut"
-			#_sraddr2line "$rfsFolder" "$elf" "$symList" "$odTCDFUNDFolder/$elfBase" "$_rdbgFolder"
-			_sraddr2line "$_rfsFolder" "$_elf" "$rfsNssFolder/$_elfP.$_nss_service_api.deps" "$odTCDFUNDFolder/$_outBase" "$_rdbgFolder"
+			#_sraddr2line "$rfsFolder" "$elf" "$symList" "$odTCDFUNDFolder/$elfBase" "$_rdbgFolder" "service"
+			_sraddr2line "$_rfsFolder" "$_elf" "$rfsNssFolder/$_elfP.$_nss_service_api.deps" "$odTCDFUNDFolder/$_outBase" "$_rdbgFolder" ".nss"
 			local _line=
 			while read _line
 			do
@@ -653,7 +697,7 @@ function _rootFSNssSingleElfAnalyzer()
 				fi
 			done < "$rfsNssFolder/$_elfP.$_nss_service_api.deps"
 			local _nss_service_lib=$(echo "$_nss_service_api" | tr '%' '/')
-			echo ${_nss_service_lib%.api} >> "$_out"
+			echo ${_nss_service_lib%.api} >> "$_out".nss
 			_none=false
 		else
 			printf "\t%s\t: none\n" "$_nss_service_api" >> "$_nssOut"
@@ -683,7 +727,7 @@ function _rootFSNssSingleElfAnalyzer()
 # ELF file NSS library list = $rfsNssFolder/<output file base name>.dload = $rfsNssFolder/<$4 base name>
 # ELF file NSS library list log = $rfsNssFolder/<output file base name>.nss.log
 
-# _rootFSNssElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name base
+# _rootFSNssElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name base : $4 - rdbg folder
 
 function _rootFSNssElfAnalyzer()
 {
@@ -712,7 +756,8 @@ function _rootFSNssElfAnalyzer()
 
 	cat /dev/null > "$_nssOut"
 	cat /dev/null > "$_nssLog"
-	_rootFSNssSingleElfAnalyzer "$_rfsFolder" "$_elf" "$_nssOut" "$_rdbgFolder" "$_nssLog"
+	_rootFSNssSingleElfAnalyzer "$_rfsFolder" "$_elf" "$rfsNssFolder/$_outBase" "$_rdbgFolder" "$_nssLog"
+	# The result is in "$_nssOut"="$rfsNssFolder/$_outBase".nss if appilcable
 
 	# Build an so DLink list if not available
 	if [ ! -e "$rfsDLinkFolder/$_outBase".dlink ]; then
@@ -723,14 +768,13 @@ function _rootFSNssElfAnalyzer()
 
 	# build lists of symbols (if not built) of all so in the DLink list and compare them with nss api
 	local _elfDLink=
+	local _outBaseDLink=
 	while read _elfDLink
 	do
-		local _outBaseDLink="$(basename $(echo $_elfDLink | tr '/' '%'))"
-		_rootFSNssSingleElfAnalyzer "$_rfsFolder" "$_elfDLink" "$odTCDFUNDFolder/$_outBaseDLink" "$_rdbgFolder" "$_nssLog"
-		if [ -s "$odTCDFUNDFolder/$_outBaseDLink" ]; then
-			cat "$odTCDFUNDFolder/$_outBaseDLink" >> "$_nssOut"
-			rm -f "$odTCDFUNDFolder/$_outBaseDLink"
-		fi
+		_outBaseDLink="$(basename $(echo $_elfDLink | tr '/' '%'))"
+		_rootFSNssSingleElfAnalyzer "$_rfsFolder" "$_elfDLink" "$rfsNssFolder/$_outBaseDLink" "$_rdbgFolder" "$_nssLog"
+		# The result is in "$_nssOut"="$rfsNssFolder/$_outBaseDLink".nss if appilcable
+		[ -s "$rfsNssFolder/$_outBaseDLink".nss ] && cat "$rfsNssFolder/$_outBaseDLink".nss >> "$_nssOut"
 	done < "$rfsDLinkFolder/$_outBase".dlink
 
 	# create a final list of elf's nss libraries
@@ -754,6 +798,7 @@ function _rootFSNssElfAnalyzer()
 # $3 - an analysis folder
 # $4 - a folder with dynamic symbol tables of rootFS Elf objects
 # $5 - an output file name
+# $6 - rdbg folder
 
 function _rootFSSymbsElfAnalyzer()
 {
@@ -762,6 +807,7 @@ function _rootFSSymbsElfAnalyzer()
 	local _wFolder="$3"
 	local _dsymFolder="$4"
 	local _out="$5"
+	local _rdbgFolder="$6"
 	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" "$FUNCNAME:" "elf" "$_elf" "libs" "$(cat $_libs | tr '\n' ' ')" "wFolder" "$_wFolder" "dlsymsFolder"  "$_dsymFolder" "out" "$_out" 
 
 	cat /dev/null > "$_out".log
@@ -770,11 +816,15 @@ function _rootFSSymbsElfAnalyzer()
 	while read _soFile
 	do
 		_soFileP=$(echo "$_soFile" | tr '/' '%')
-		join -t$'\t' -1 1 -2 2 "$_wFolder/$_elfP".symbs "$_dsymFolder/$_soFileP".odTC-DFtext -o 2.1,2.2 | grep -v "^[[:xdigit:]]\{8\}"$'\t'"main$" > "$_wFolder/$_elfP-$_soFileP".str-symb
+		join -t$'\t' -1 1 -2 2 "$_wFolder/$_elfP".vccpp "$_dsymFolder/$_soFileP".odTC-DFtext -o 2.1,2.2 | grep -v "^[[:xdigit:]]\{8\}"$'\t'"main$" > "$_wFolder/$_elfP-$_soFileP".str-symb
 		if [ -s "$_wFolder/$_elfP-$_soFileP".str-symb ]; then
 			echo "$_soFile:" >> "$_out".log
 			cut -f1 "$_wFolder/$_elfP-$_soFileP".str-symb > "$_wFolder/$_elfP-$_soFileP".str-symb.addrs
-			addr2line -Cpfa -e "$rfsFolder/$_soFile" @"$_wFolder/$_elfP-$_soFileP".str-symb.addrs >"$_wFolder/$_elfP-$_soFileP".str-symb.addr2line
+
+			# Find source code locations of symbol refs, init a path from a dbg folder if set
+			local _elfPath=$(_getElfDbgPath "$rfsFolder" "$_elf" "$_rdbgFolder" "$_out")
+
+			addr2line -Cpfa -e "$_elfPath" @"$_wFolder/$_elfP-$_soFileP".str-symb.addrs >"$_wFolder/$_elfP-$_soFileP".str-symb.addr2line
 			sed 's/^/\t/' <(cut -f2- "$_wFolder/$_elfP-$_soFileP".str-symb.addr2line) >> "$_out".log
 			echo "$_soFile" >> "$_out" # matched libs
 
@@ -836,59 +886,37 @@ function _rootFSDLoadElfAnalyzer()
 		return
 	fi
 
-	if [ ! -e "$rootFS".files.elf.dlink-libdld.dlapi ] || [ ! -e "$rootFS".files.so.unrefed.dlink-libdld.dlapi ]; then
-		echo "Calling $path/rootFSELFAnalyzer.sh..."
-		local _rdbg=
-		local _objd=
-
-		[ -n "$_rdbgFolder" ] && _rdbg="-rdbg $_rdbgFolder"
-		[ -n "$objdump" ] && _objd="-od $objdump"
-		"$path"/rootFSELFAnalyzer.sh -r $rfsFolder -dlink $_objd $_rdbg
-		local _err_=$?
-		if [ $_err_ != 0 ]; then
-			echo "$name# ERROR=$_err_ executing $FUNCNAME:\"$path/rootFSELFAnalyzer.sh -r $rfsFolder -dlink $_objd $_rdbg\" : Exit." | tee -a "$name".log
-			exit $ERR_INTERNAL_ERROR
-		fi
+	if [ ! -s "$rootFS".files.elf.dlapi.all ]; then
+		echo "$name# ERROR : \""$rootFS".files.elf.dlapi.all\" is empty or not found! Exit." | tee -a "$name".log
+		exit $ERR_OBJ_NOT_VALID
 	fi
-	sort -u -k9 "$rootFS".files.elf.dlink-libdld.dlapi "$rootFS".files.so.unrefed.dlink-libdld.dlapi -o "$rootFS".files.elf.dlink-libdld.dlapi.all
 
-	[ ! -e "$rootFS".files.elf.dlink-libdld.dlapi.short ] && fllo2sh "$rootFS".files.elf.dlink-libdld.dlapi "$rootFS".files.elf.dlink-libdld.dlapi.short
-	[ ! -e "$rootFS".files.so.unrefed.dlink-libdld.dlapi.short ] && fllo2sh "$rootFS".files.so.unrefed.dlink-libdld.dlapi "$rootFS".files.so.unrefed.dlink-libdld.dlapi.short
-	[ ! -e "$rootFS".files.elf.dlink-libdld.dlapi.all.short ] && fllo2sh "$rootFS".files.elf.dlink-libdld.dlapi.all "$rootFS".files.elf.dlink-libdld.dlapi.all.short
-
+	[ ! -e "$rootFS".files.elf.dlapi.all.short ] && fllo2sh "$rootFS".files.elf.dlapi.all "$rootFS".files.elf.dlapi.all.short
 	[ ! -e "$rootFS".files.exe.all.short ] && fllo2sh "$rootFS".files.exe.all "$rootFS".files.exe.all.short
 	[ ! -e "$rootFS".files.so.all.short ] && fllo2sh "$rootFS".files.so.all "$rootFS".files.so.all.short
 
-	# create a list of libs and an exe (if required) of libdl directly dependent elfs
-	if [ -s "$_dlinkOutBase".libdl ]; then
-		comm -1 "$rootFS".files.elf.dlink-libdld.dlapi.all.short "$_dlinkOutBase".libdl | awk -F'\t' -v base="$rfsDLoadFolder/$_outBase" '{\
-		if (NF == 2) {\
-			printf("%s\n", $2) > base".dlink-libdld.dlapi"
-		} else if (NF == 1) {\
-			printf("%-36s : dlapi =\n", $1) > base".dload.log"
-		}\
-		}'
-	else
-		comm -12 "$rootFS".files.elf.dlink-libdld.dlapi.all.short <(sort <(cat "$_dlinkOutBase" <(echo "$_elf"))) > $rfsDLoadFolder/$_outBase.dlink-libdld.dlapi
-	fi
+	# create a list of dlapi dependent libs and an exe
+	cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink.dlapi
+	comm -1 "$rootFS".files.elf.dlapi.all.short <(sort <(cat "$_dlinkOutBase" <(echo "$_elf"))) | awk -F'\t' -v base="$rfsDLoadFolder/$_outBase" '{\
+	if (NF == 2) {\
+		printf("%s\n", $2) > base".dlink.dlapi"
+	} else if (NF == 1) {\
+		printf("%-36s : dlapi =\n", $1) > base".dload.log"
+	}\
+	}'
 
-	# find all dlapi libs:
-	[ ! -e "$rootFS".files.so.dlink-libdld.dlapi.short ] && fllo2sh "$rootFS".files.so.dlink-libdld.dlapi "$rootFS".files.so.dlink-libdld.dlapi.short
-	[ ! -e "$rootFS".files.so.dlink-libdld.dlapi.all.short ] && sort -u "$rootFS".files.so.dlink-libdld.dlapi.short "$rootFS".files.so.unrefed.dlink-libdld.dlapi.short \
-		-o "$rootFS".files.so.dlink-libdld.dlapi.all.short
-	
-	ln -sf "$PWD/$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi "$PWD/$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.link
+	ln -sf "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi "$rfsDLoadFolder/$_outBase".dlink.dlapi.link
 
 	local _iter=1
 	cat /dev/null > "$rfsDLoadFolder/$_outBase".dload+dlink.all
-	cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.parsed
-	while [ -s "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.link ]
+	cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed
+	while [ -s "$rfsDLoadFolder/$_outBase".dlink.dlapi.link ]
 	do
 		local _elfDLoad=
-		cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.next
+		cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
 		while read _elfDLoad
 		do
-			#printf "\t%-2d: elfDLoad=%s\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
+			printf "\t%-2d: elfDLoad=%s\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
 			local _elfDLoadP=$(echo $_elfDLoad | tr '/' '%')
 			#[ -e $rfsDLoadFolder/$_elfDLoadP.dload ] && continue
 			local _outElfBase="$(basename "$_elfDLoadP")"
@@ -910,7 +938,7 @@ function _rootFSDLoadElfAnalyzer()
 
 			# build elf's list of UND symbols if not built
 			if [ ! -s "$odTCDFUNDFolder/$_outElfBase".odTC-DFUND ]; then
-				"$objdump" -TC "$_rfsFolder/$_elfDLoad" | grep "^[[:xdigit:]]\{8\}.*\{6\}DF \*UND\*" | cut -f2 | tr -s ' ' | cut -d ' ' -f3- | cut -d '(' -f1 | sort -u -o ${odTCDFUNDFolder}/"$_outElfBase".odTC-DFUND
+				_buildElfDFUNDtTable "$_rfsFolder" "$_elfDLoad" "$odTCDFUNDFolder/$_outElfBase".odTC-DFUND
 			fi
 
 			# Identify an elf's obj dependencies on $libdlDefault api
@@ -922,32 +950,32 @@ function _rootFSDLoadElfAnalyzer()
 
 			printf "%-36s : dlapi = %s\n" "$_elfDLoad" "$(echo "$libdlApi" | tr '\n' ' ')" >> "$_dloadLog"
 
-			if [[ "$libdlApi" == *dlopen* ]] || [[ "$libdlApi" == *dlsym* ]]; then
-				if [ ! -e "$_symbsBase".symbs ]; then
-					#printf "strings %s doesn't exist\n" "$_symbsBase.symbs" >> "$name".log
-					strings "$_rfsFolder/$_elfDLoad" | grep -v "[^a-zA-Z0-9_./]" | sort -u -o "$_symbsBase".symbs
-				#else
-					#printf "strings %s exists\n" "$_symbsBase.symbs" >> "$name".log
-				fi
+			if [[ "$libdlApi" == *dlopen* ]] && [ ! -e "$_symbsBase".str-so ]; then
+				# 1. Find a list of shared objects in strings,
+				strings "$_rfsFolder/$_elfDLoad" | grep "\.so" | sort -u -o "$_symbsBase".str-so
+			fi
+			if [[ "$libdlApi" == *dlsym* ]] && [ ! -e "$_symbsBase".vccpp ]; then
+				# 1. Find a list of valid c/cpp identifiers in strings,
+				strings "$_rfsFolder/$_elfDLoad" | grep "^[a-zA-Z_][a-zA-Z0-9_]*$" | sort -u -o "$_symbsBase".vccpp
 			fi
 
 			if [ ! -s "$_dlinkOut" ]; then
-				#printf "dlink %s exists\n" " $_dlinkOut" >> "$name".log
+				#printf "dlink %s doesn't exist\n" "$_dlinkOut" >> "$name".log
 				#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 				# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
 				_rootFSDLinkElfAnalyzer "$_rfsFolder" "$_elfDLoad" "" "$_dlinkOut" "$_wFolder" "" "$_rdbgFolder" ""
 			#else
-				#printf "dlink %s doesn't exist\n" "$_dlinkOut" >> "$name".log
+				#printf "dlink %s exists\n" " $_dlinkOut" >> "$name".log
 			fi
 
 			if [[ "$libdlApi" == *dlopen* ]]; then
-				# 1. Find a list of shared objects in strings,
-				grep "\.so" "$_symbsBase".symbs | sort -u -o "$_symbsBase".str-so
 				#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 				# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
-				_rootFSDLinkElfAnalyzer "$_rfsFolder" "$_elfDLoad" "$_symbsBase".str-so "$_symbsBase".str-so.dlink "$_wFolder" "" "$_rdbgFolder" ""
-				# 2. remove <this> dlapi elf and compare it with a list of all (capable of dload) libs to find dependent libdl api libs
-				comm -12 <(comm -23 "$_symbsBase".str-so.dlink <(echo "$_elfDLoad")) "$rootFS".files.so.dlink-libdld.dlapi.all.short > "$_dlopenOut"
+				_rootFSDLinkElfAnalyzer "$_rfsFolder" "$_elfDLoad" "$_symbsBase".str-so "$_symbsBase".str-so.dlink "$_wFolder" "libdl" "$_rdbgFolder" ""
+
+				# 2. remove <this> dlapi elf and compare the result with a list of all libdl api/libdld libs (if available) to find libdl api libs only
+				comm -12 <(comm -23 "$_symbsBase".str-so.dlink <(echo "$_elfDLoad")) "$rootFS".files.elf.dlapi.all.short > "$_dlopenOut"
+
 				if [ -s "$_dlopenOut" ]; then
 					cat "$_dlopenOut" >> "$_dloadOut"
 					printf "\t%-28s : %s (%d)\n" "dlopen" "$_dlopenOut" $(wc -l "$_dlopenOut" | cut -d ' ' -f1) >> "$_dloadLog"
@@ -958,8 +986,8 @@ function _rootFSDLoadElfAnalyzer()
 
 				echo "$_elfDLoad" > "$_outElfBase".file
 				echo "dlopen" > "$_outElfBase".sym
-				# _elfSymRefSources "rfsFolder" "elf list"          "symbol list"      "out folder"      "postfix" "dbg folder"
-				_elfSymRefSources "$_rfsFolder" "$_outElfBase".file "$_outElfBase".sym "$odTCDFUNDFolder/" "" "$_rdbgFolder"
+				# _elfSymRefSources "rfsFolder" "elf list"          "symbol list"      "out folder"      "postfix" "dbg folder" "service"
+				_elfSymRefSources "$_rfsFolder" "$_outElfBase".file "$_outElfBase".sym "$odTCDFUNDFolder/" "" "$_rdbgFolder" ".libdl"
 				if [ -e "$odTCDFUNDFolder/$_outElfBase".usr.dlopen ]; then
 					printf "\t\t%-20s :\t\t%s (%d)\n" "dlopen refs" "$odTCDFUNDFolder/$_outElfBase".usr.dlopen $(wc -l "$odTCDFUNDFolder/$_outElfBase".usr.dlopen | cut -d ' ' -f1) >> "$_dloadLog"
 				else
@@ -970,7 +998,7 @@ function _rootFSDLoadElfAnalyzer()
 
 			if [[ "$libdlApi" == *dlsym* ]]; then
 				# Find a list of shared objects that have strings matching valid c/cpp identifiers/symbols
-				_rootFSSymbsElfAnalyzer "$_elfDLoad" <(comm -23 "$rootFS".files.so.all.short "$_dlinkOut") "$rfsSymsFolder" "$odTCDFtextFolder" "$_dlsymsOut"
+				_rootFSSymbsElfAnalyzer "$_elfDLoad" <(comm -23 "$rootFS".files.so.all.short "$_dlinkOut") "$rfsSymsFolder" "$odTCDFtextFolder" "$_dlsymsOut" "$_rdbgFolder"
 				if [ -s "$_dlsymsOut" ]; then
 					cat "$_dlsymsOut" >> "$_dloadOut"
 					printf "\t%-28s : %s (%d)\n" "dlsym" "$_dlsymsOut" $(wc -l "$_dlsymsOut" | cut -d ' ' -f1) >> "$_dloadLog"
@@ -995,32 +1023,32 @@ function _rootFSDLoadElfAnalyzer()
 				printf "\t%-28s : %s (%d)\n" "dloaded" "$_dloadOut" $(wc -l "$_dloadOut" | cut -d ' ' -f1) >> "$_dloadLog"
 				cat "$_dloadOut" >> "$_dloadOutAll"
 
-				comm -12 "$_dloadOut" "$rootFS".files.so.dlink-libdld.dlapi.all.short >> "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.next
+				comm -12 "$_dloadOut" "$rootFS".files.elf.dlapi.all.short >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
 			else
 				printf "\t%-28s : not found\n" "dloaded" >> "$_dloadLog"
 			fi
 
 			cat <(echo $_elfDLoad) "$_dloadOut" "$_dlinkOut" >> $rfsDLoadFolder/$_outBase.dload+dlink.all
 
-			echo "$_elfDLoad" >> "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.parsed
+			echo "$_elfDLoad" >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed
 			((_iter++))
 
-		done < "$PWD/$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi
+		done < "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi
 
-		sort -u "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.parsed -o "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.parsed
-		sort -u "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.next -o "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.next
-		comm -23 "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.next "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.parsed > "$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi
+		sort -u "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed -o "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed
+		sort -u "$rfsDLoadFolder/$_outBase".dlink.dlapi.next -o "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
+		comm -23 "$rfsDLoadFolder/$_outBase".dlink.dlapi.next "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed > "$rfsDLoadFolder/$_outBase".dlink.dlapi
 
 		# cleanup
-		rm -f $rfsDLoadFolder/$_outBase.dlink-libdld.dlapi.next
+		rm -f $rfsDLoadFolder/$_outBase.dlink.dlapi.next
 	done
 
 	sort -u "$_dloadOutAll" -o "$_dloadOutAll"
 	sort -u "$rfsDLoadFolder/$_outBase".dload+dlink.all -o "$rfsDLoadFolder/$_outBase".dload+dlink.all
 
 	# cleanup
-	rm -f "$PWD/$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi.link "$PWD/$rfsDLoadFolder/$_outBase".dlink-libdld.dlapi
-	rm -f "$rootFS".files.elf.dlink-libdld.dlapi.all.short "$rootFS".files.so.dlink-libdld.dlapi.all.short
+	rm -f "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi.link "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi
+	rm -f "$rootFS".files.elf.dlapi.all.short "$rootFS".files.so.dlink.dlapi.all.short
 }
 
 # Function: _rootFSElfAnalyzerValidation
