@@ -22,15 +22,16 @@
 # Function: usage
 function usage()
 {
-	echo "$name# Usage : `basename $0 .sh` [-r folder -e elf -l symlist [-od name]] | [-h]"
-	echo "$name# Finds source locations of references to symbols; requires env PATH set to platform tools with objdump"
+	echo "$name# Usage : `basename $0 .sh` -r folder [[-e file] | [-l file]] [-od name] | [-h]"
+	echo "$name# Target rootFS ELF object symbol builder, requires env PATH set to platform tools with objdump"
 	echo "$name# -r    : a mandatory rootFS folder"
-	echo "$name# -rdbg : an optional rootFS dbg folder with symbolic info"
-	echo "$name# -e    : a mandatory target elf (exe/so) object - mutually exclusive with -el"
-	echo "$name# -el   : a mandatory target elf (exe/so) object list"
-	echo "$name# -s    : a mandatory single symbol - mutually exclusive with -sl"
-	echo "$name# -sl   : a mandatory elf symbol list file - mutually exclusive with -s"
+	echo "$name# -rdbg : an optional rootFS dbg folder with ELF symbolic info"
+	echo "$name# -e    : a mandatory target elf (exe/so) object - mutually exclusive with -l"
+	echo "$name# -el   : a mandatory elf reference file - mutually exclusive with -e"
+	echo "$name# -s    : a mandatory d/u (defined/undefined) symbol option"
+	echo "$name# -cache: \"use cache\" option; default - cache is not used, all file folders are removed"
 	echo "$name# -od   : an objdump to use instead of default: {armeb-rdk-linux-uclibceabi-objdump | mipsel-linux-objdump | i686-cm-linux-objdump}"
+	echo "$name# -w    : an optional work folder"
 	echo "$name# -h    : display this help and exit"
 }
 
@@ -55,13 +56,15 @@ if [ ! -e "$path"/rootFSElfAnalyzerCommon.sh ]; then
 fi
 
 . "$path"/rootFSElfAnalyzerCommon.sh
+. "$path"/rootFSCommon.sh
 
 rfsFolder=
 rdbgFolder=
+wFolder=.
 elf=
+cache=
 elfList=
-sym=
-symList=
+symbols=
 
 while [ "$1" != "" ]; do
 	case $1 in
@@ -77,14 +80,16 @@ while [ "$1" != "" ]; do
 		-el )		shift
 				elfList="$1"
 				;;
-		-sl )		shift
-				symList="$1"
-				;;
 		-s )		shift
-				sym="$1"
+				symbols="$1"
+				;;
+		-cache )	cache=y
 				;;
 		-od )		shift
 				objdump="$1"
+				;;
+		-w )		shift
+				wFolder="$1"
 				;;
 		-h | --help )	usage
 				exit $ERR_NOT_A_ERROR
@@ -109,7 +114,7 @@ if [ -n "$rdbgFolder" ] && [ ! -d "$rdbgFolder" ]; then
 fi
 
 if [ -n "$elf" ] && [ -n "$elfList" ]; then
-	echo "$name# ERROR : -e and -el options are mutually exclusive!" | tee -a "$name".log
+	echo "$name# ERROR : -e and -l options are mutually exclusive!" | tee -a "$name".log
 	usage
 	exit $ERR_OBJ_NOT_VALID
 elif [ -n "$elf" ] && [ ! -e "$rfsFolder"/"$elf" ]; then
@@ -121,39 +126,28 @@ elif [ -n "$elfList" ] && [ ! -e "$elfList" ]; then
 	usage
 	exit $ERR_PARAM_NOT_SET
 elif [ -z "$elf" ] && [ -z "$elfList" ]; then
-	echo "$name# ERROR : Either an elf object or elf list options \"-e / -el\" must be set!" | tee -a "$name".log
+	echo "$name# ERROR : Either elf object or elf reference file via -e / -l options must be set!" | tee -a "$name".log
 	usage
 	exit $ERR_PARAM_NOT_SET
 fi
 
-if [ -n "$elfList" ]; then
-	while read entry
-	do
-		if [ ! -e "$rfsFolder/$entry" ]; then
-			echo "$name# ERROR : elf object \"$rfsFolder/$entry\" in the \"$elfList\" list is not found!" | tee -a "$name".log
-			usage
-			exit $ERR_OBJ_NOT_VALID
-		fi
-	done < "$elfList"
+if [ -z "$symbols" ]; then
+	echo "$name# ERROR : d/u (defined/undefined) symbol option-s must be set!" | tee -a "$name".log
+	usage
+	exit $ERR_PARAM_NOT_SET
 fi
 
-if [ -n "$symList" ] && [ -n "$sym" ]; then
-	echo "$name# ERROR : -s and -sl options are mutually exclusive!" | tee -a "$name".log
+echo "symbols=$symbols"
+
+if [[ $symbols =~ [^ud] ]]; then
+	echo "$name# ERROR : invalid option -s = \"$(echo $symbols | sed 's/u//g;s/d//g')\". Exit !" | tee -a "$name".log
 	usage
 	exit $ERR_OBJ_NOT_VALID
-elif [ -n "$symList" ] && [ ! -e "$symList" ]; then
-	echo "$name# ERROR : elf symbol list file \"$symList\" is not found!" | tee -a "$name".log
-	usage
-	exit $ERR_PARAM_NOT_SET
-elif [ -z "$sym" ] && [ -z "$symList" ]; then
-	echo "$name# ERROR : Either symbol or symbol list file options \"-s / -sl\" must be set!" | tee -a "$name".log
-	usage
-	exit $ERR_PARAM_NOT_SET
 fi
 
-# Check paltform
 [ -n "$elf" ] && platformFile="$elf" || platformFile="/bin/bash"
 
+# Check paltform
 platform="$(file -b "$rfsFolder/$platformFile" | grep "^ELF ")"
 if [ -z "$platform" ]; then
 	echo "$name# ERROR  : object \"$rfsFolder/$elf\" is NOT an ELF file!" | tee -a "$name".log
@@ -195,7 +189,6 @@ else
 	fi
 fi
 
-
 if [ ! -e "$rfsFolder"/version.txt ]; then
 	echo "$name# Warn  : $rfsFolder/version.txt file is not present. Cannot retrieve version info. Using rootFS folder name" | tee -a "$name".log
 	rootFS=`basename $rfsFolder`
@@ -203,82 +196,70 @@ else
 	rootFS=`grep -i "^imagename" $rfsFolder/version.txt |  tr ': =' ':' | cut -d ':' -f2`
 fi
 
-echo "$name : rfsFolder  = $rfsFolder"    | tee -a "$name".log
-echo "$name : rdbgFolder = $rdbgFolder" | tee -a "$name".log
-if [ -n "$elf" ]; then 
-	echo "$name : elf        = $elf"     | tee -a "$name".log
+echo "$name : rfsFolder = $rfsFolder" | tee -a "$name".log
+echo "$name : rdbgFolder= $rdbgFolder" | tee -a "$name".log
+if [ -n "$elf" ]; then
+	echo "$name : elf       = $elf" | tee -a "$name".log
 else
-	echo "$name : elfList    = $elfList" | tee -a "$name".log
+	echo "$name : elfList   = $elfList" | tee -a "$name".log
 fi
-if [ -n "$sym" ]; then 
-	echo "$name : sym        = $sym"     | tee -a "$name".log
+echo "$name : objdump   = $objdump"   | tee -a "$name".log
+echo "$name : path      = $path"      | tee -a "$name".log
+echo "$name : rootFS    = $rootFS"    | tee -a "$name".log
+if [ -z "$cache" ]; then
+	echo "$name : cache     = no" | tee -a "$name".log
 else
-	echo "$name : symList    = $symList" | tee -a "$name".log
+	echo "$name : cache     = yes" | tee -a "$name".log
 fi
-echo "$name : objdump    = $objdump"   | tee -a "$name".log
-echo "$name : path       = $path"      | tee -a "$name".log
-echo "$name : rootFS     = $rootFS"    | tee -a "$name".log
+if [ -n "$wFolder" ]; then
+	echo "$name : work dir  = $wFolder"  | tee -a "$name".log
+fi
+
+odTCDFUNDFolder="$rootFS".odTC-DFUND
+odTCDFtextFolder="$rootFS".odTC-DFtext
 
 startTime=`cut -d ' ' -f1 /proc/uptime | cut -d '.' -f1`
 
-odTCDFUNDFolder="$rootFS".odTC-DFUND
-mkdir -p "$odTCDFUNDFolder"
+outFile=$(echo "$elf" | tr '/' '%')
+if [[ $symbols = *[u]* ]]; then
+	_wFolderPfx=$(_mkWFolder "$wFolder/$odTCDFUNDFolder")
+	echo "$name : wFolderPfx= $_wFolderPfx" | tee -a "$name".log
 
-rfsLibdlFolder="$rootFS".libdl
-mkdir -p $rfsLibdlFolder
-
-if [ -n "$elf" ] && [ -n "$sym" ]; then
-	elfBase=$(echo "$elf" | tr -s '/' '%')
-
-	echo "$elf" > "$elfBase".elf
-	echo "$sym" > "$elfBase"."$sym".sym
-
-	elfFile="$elfBase".elf
-	symFile="$elfBase"."$sym".sym
-
-elif [ -n "$elf" ] && [ -n "$symList" ]; then
-	elfBase=$(echo "$elf" | tr -s '/' '%')
-
-	echo "$elf" > "$elfBase".elf
-
-	elfFile="$elfBase".elf
-	#symFile="$symList"
-	ln -sf "$symList" $symList.link
-	symFile="$symList".link
-
-elif [ -n "$elfList" ] && [ -n "$sym" ]; then
-
-	elfBase="$(basename "$elfList")"
-	echo "$sym" > "$elfBase"."$sym".sym
-
-	ln -sf "$elfList" "$elfList".link
-	elfFile="$elfList".link
-	symFile="$elfBase"."$sym".sym
-
-else	#[ -n "$elfList" ] && [ -n "$symList" ]; then
-
-	elfBase="$(basename "$elfList")"
-
-	ln -sf "$elfList" "$elfList".link
-	elfFile="$elfList".link
-	ln -sf "$symList" $symList.link
-	symFile="$symList".link
+	if [ -n "$elf" ]; then
+		_buildElfDFUNDtTable "$rfsFolder" "$elf" "$_wFolderPfx/$outFile"
+	else
+		while read entry
+		do
+			if [ ! -e "$rfsFolder"/"$entry" ]; then
+				echo "$name# ERROR : elf object \"$rfsFolder/$entry\" is not found!" | tee -a "$name".log
+				usage
+				exit $ERR_PARAM_NOT_SET
+			else
+				_buildElfDFUNDtTable "$rfsFolder" "$entry" "$_wFolderPfx/$(echo "$entry" | tr '/' '%')"
+			fi
+		done < "$elfList"
+	fi
 fi
 
-pfx=""
-service=""
+if [[ $symbols = *[d]* ]]; then
+	_wFolderPfx=$(_mkWFolder "$wFolder/$odTCDFtextFolder")
+	echo "$name : wFolderPfx= $_wFolderPfx" | tee -a "$name".log
 
-# _elfSymRefSources "$_rfsFolder" "$_elf" "$symListFile" "locationBase" "service"
-#_elfSymRefSources "$rfsFolder" "$elfFile" "$symFile" "$odTCDFUNDFolder/$elfBase" "service"
-_elfSymRefSources "$rfsFolder" "$elfFile" "$symFile" "$odTCDFUNDFolder"/ "$pfx" "$rdbgFolder" "$service"
-if [ -n "$sym" ] || [ -n "$elf" ]; then
-	cat "$odTCDFUNDFolder/$elfBase$pfx".log | tee -a "$name".log
-else
-	cat "$odTCDFUNDFolder/$elfBase$pfx".log >> "$name".log
+	if [ -n "$elf" ]; then
+		_buildElfDFtextTable "$rfsFolder" "$elf" "$_wFolderPfx/$outFile"
+	else
+		while read entry
+		do
+			if [ ! -e "$rfsFolder"/"$entry" ]; then
+				echo "$name# ERROR : elf object \"$rfsFolder/$entry\" is not found!" | tee -a "$name".log
+				usage
+				exit $ERR_PARAM_NOT_SET
+			else
+				_buildElfDFtextTable "$rfsFolder" "$entry" "$_wFolderPfx/$(echo "$entry" | tr '/' '%')"
+			fi
+		done < "$elfList"
+	fi
 fi
-
-# cleanup
-rm -rf "$elfFile" "$symFile"  #"$odTCDFUNDFolder"/
 
 endTime=`cut -d ' ' -f1 /proc/uptime | cut -d '.' -f1`
 execTime=`expr $endTime - $startTime`

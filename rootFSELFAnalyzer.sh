@@ -556,6 +556,31 @@ fi
 
 if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 	echo "Dynamically linked shared object analysis:" | tee -a "$name".log
+	cat /dev/null > "$rootFS".files.elf.dlapi.all.short
+	while read filename
+	do
+		outFile=$(echo "$filename" | tr '/' '%').odTC-DFUND
+		_buildElfDFUNDtTable "$rfsFolder" "$filename" "$odTCDFUNDFolder/$outFile"
+		dlapi=$(comm -12 "$odTCDFtextFolder"/libdlApi "$odTCDFUNDFolder/$outFile" | tr '\n' ' ')
+		if [ -n "$dlapi" ]; then
+			echo $filename >> "$rootFS".files.elf.dlapi.all.short
+			printf "%s\t%s\n" "$filename" "$dlapi" >> "$rootFS".files.elf.dlapi.table
+		fi
+	done < "$rootFS".files.elf.all.short
+	sort "$rootFS".files.elf.dlapi.all.short -o "$rootFS".files.elf.dlapi.all.short
+	sort -t$'\t' -k1,1 "$rootFS".files.elf.dlapi.table -o "$rootFS".files.elf.dlapi.table
+
+	# Find all elf (exe/so) files containing libdl api calls
+	flsh2lo "$rootFS".files.elf.dlapi.all.short "$rootFS".files.elf.all "$rootFS".files.elf.dlapi.all
+
+	# Find all exe files containing libdl api calls
+	comm -12 "$rootFS".files.elf.dlapi.all.short "$rootFS".files.exe.all.short > "$rootFS".files.exe.dlapi.all.short
+	flsh2lo "$rootFS".files.exe.dlapi.all.short "$rootFS".files.exe.all "$rootFS".files.exe.dlapi.all
+
+	# Find all so files containing libdl api calls
+	comm -12 "$rootFS".files.elf.dlapi.all.short "$rootFS".files.so.all.short > "$rootFS".files.so.dlapi.all.short
+	flsh2lo "$rootFS".files.so.dlapi.all.short "$rootFS".files.so.all "$rootFS".files.so.dlapi.all
+
 	# Dynamically linked shared libraries analysis
 	cat /dev/null > "$rfsDLinkFolder"/dlink.error
 	while read filename
@@ -569,7 +594,6 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 		fi	
 	done < "$rootFS".files.elf.analyze.short
 
-#	find $rfsDLinkFolder -maxdepth 1 -size 0 -exec rm {} \;
 	[ ! -s "$rfsDLinkFolder"/dlink.error ] && rm "$rfsDLinkFolder"/dlink.error
 	sort -u "$rfsDLinkFolder"/*.dlink -o "$rootFS".files.so.dlink.short
 	if [ -n "$rdbgFolder" ]; then
@@ -611,14 +635,27 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 	flsh2lo "$rootFS".files.exe.dlink-libdld.dlapi.short "$rootFS".files.elf.all "$rootFS".files.exe.dlink-libdld.dlapi
 	flsh2lo "$rootFS".files.so.dlink-libdld.dlapi.short "$rootFS".files.elf.all "$rootFS".files.so.dlink-libdld.dlapi
 
+	# Find exe files dynamically linked with libdl and containing libdl api calls
+	cat /dev/null > "$rootFS".files.exe.dlink-libdl.dlapi.short
+	while read filename
+	do
+		outFile=$(echo "$filename" | tr '/' '%').dlink
+		if [ -n "$(comm -12 "$rootFS".files.so.dlapi.all.short "$rfsDLinkFolder/$outFile")" ]; then
+			echo "$filename" >> "$rootFS".files.exe.dlink-libdl.dlapi.short
+		fi	
+	done < "$rootFS".files.exe.dlink-libdl.short
+	sort -u "$rootFS".files.exe.dlink-libdld.dlapi.short "$rootFS".files.exe.dlink-libdl.dlapi.short -o "$rootFS".files.exe.dlink-libdl.dlapi.short.tmp
+	mv "$rootFS".files.exe.dlink-libdl.dlapi.short.tmp "$rootFS".files.exe.dlink-libdl.dlapi.short
+	flsh2lo "$rootFS".files.exe.dlink-libdl.dlapi.short "$rootFS".files.exe.all "$rootFS".files.exe.dlink-libdl.dlapi
+
 	cat /dev/null > "$rootFS".files.so.dlink-libdld.dlapi.log
 	#_soRefedByApp $_folder $_elfFileList $_log
 	_soRefedByApp "$rfsDLinkFolder" "$rootFS".files.so.dlink-libdld.dlapi.short "$rootFS".files.so.dlink-libdld.dlapi.log
 
 	flsh2lo "$rootFS".files.so.dlink.short "$rootFS".files.so.all "$rootFS".files.so.dlink
 
-	echo /dev/null > "$rootFS".files.so.unrefed.dlink-libdld.dlapi
-	echo /dev/null > "$rootFS".files.so.unrefed.dlink-libdld.dlapi.short
+	cat /dev/null > "$rootFS".files.so.unrefed.dlink-libdld.dlapi
+	cat /dev/null > "$rootFS".files.so.unrefed.dlink-libdld.dlapi.short
 	if [ -z "$exeList" ]; then
 		# Dynamically linked unreferenced shared libraries analysis
 		# build "$rootFS".files.so.unrefed
@@ -636,7 +673,7 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 				echo "$rfsDLinkUnrefedSoFolder/$outFile".error >> "$rfsDLinkUnrefedSoFolder"/dlink.error
 			fi	
 		done < "$rootFS".files.so.unrefed.short
-#		find $rfsDLinkUnrefedSoFolder -maxdepth 1 -size 0 -exec rm {} \;
+
 		[ ! -s "$rfsDLinkUnrefedSoFolder"/dlink.error ] && rm "$rfsDLinkUnrefedSoFolder"/dlink.error
 		if [ -n "$rdbgFolder" ]; then
 			cat "$odTCDFUNDFolder"/*.dbg-missing 2>/dev/null > "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing
@@ -670,9 +707,9 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 	fi
 
 	# Cleanup
-#	find $rfsDLinkFolder -maxdepth 1 -size 0 -exec rm {} \;
-#	find $rfsDLinkUnrefedSoFolder -maxdepth 1 -size 0 -exec rm {} \;
-#	find $odTCDFUNDFolder -maxdepth 1 -size 0 -exec rm {} \;
+	find $rfsDLinkFolder -maxdepth 1 -size 0 -exec rm {} \;
+	find $rfsDLinkUnrefedSoFolder -maxdepth 1 -size 0 -exec rm {} \;
+	find $odTCDFUNDFolder -maxdepth 1 -size 0 -exec rm {} \;
 fi
 
 if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
@@ -688,16 +725,20 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 	[ -s "$rootFS".files.elf.dlink-libdld ] && logFile "$rootFS".files.elf.dlink-libdld "elfs dlinked with libdl directly" "$name".log
 
 	# elf (exe/so) files dynamically linked with libdl directly and not containing libdl api calls
-	[ -s "$rootFS".files.elf.dlink-libdld.no-dlapi ] && logFile "$rootFS".files.elf.dlink-libdld.no-dlapi "elfs dlinked with libdl, no dlapi" "$name".log
+	[ -s "$rootFS".files.elf.dlink-libdld.no-dlapi ] && logFile "$rootFS".files.elf.dlink-libdld.no-dlapi "elfs dlinked with libdld, no dlapi" "$name".log
 
 	# elf (exe/so) files dynamically linked with libdl directly and containing libdl api calls
-	[ -s "$rootFS".files.elf.dlink-libdld.dlapi ] && logFile "$rootFS".files.elf.dlink-libdld.dlapi "elfs dlinked with libdl, dlapi" "$name".log
+	[ -s "$rootFS".files.elf.dlink-libdld.dlapi ] && logFile "$rootFS".files.elf.dlink-libdld.dlapi "elfs dlinked with libdld, dlapi" "$name".log
 
 	# exe files dynamically linked with libdl directly and containing libdl api calls
-	[ -s "$rootFS".files.exe.dlink-libdld.dlapi ] && logFile "$rootFS".files.exe.dlink-libdld.dlapi "exes dlinked with libdl, dlapi" "$name".log
+	[ -s "$rootFS".files.exe.dlink-libdld.dlapi ] && logFile "$rootFS".files.exe.dlink-libdld.dlapi "exes dlinked with libdld, dlapi" "$name".log
 
 	# so files dynamically linked with libdl directly and containing libdl api calls
-	[ -s "$rootFS".files.so.dlink-libdld.dlapi ] && logFile "$rootFS".files.so.dlink-libdld.dlapi "libs dlinked with libdl, dlapi" "$name".log
+	[ -s "$rootFS".files.so.dlink-libdld.dlapi ] && logFile "$rootFS".files.so.dlink-libdld.dlapi "libs dlinked with libdld, dlapi" "$name".log
+
+	# exe files dynamically linked with libdl and containing libdl api calls
+	[ -s "$rootFS".files.exe.dlink-libdl.dlapi ] && logFile "$rootFS".files.exe.dlink-libdl.dlapi "exes dlinked with libdl, dlapi" "$name".log
+
 	printf "%-86s : %s\n" "libs dlinked with libdl, dlapi - referenced by applications" "$rootFS".files.so.dlink-libdld.dlapi.log | tee -a $name.log
 
 	if [ -z "$exeList" ]; then
@@ -718,6 +759,15 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 
 		# all elf (exe/so) files dynamically linked with libdl directly and not containing libdl api calls
 		[ -s "$rootFS".files.elf.dlink-libdld.no-dlapi.all ] && logFile "$rootFS".files.elf.dlink-libdld.no-dlapi.all "All elfs libdl dlinked, no dlapi" "$name".log
+
+		# all elf (exe/so) files containing libdl api calls
+		[ -s "$rootFS".files.elf.dlapi.all ] && logFile "$rootFS".files.elf.dlapi.all "All elfs, dlapi" "$name".log
+
+		# all exe files containing libdl api calls
+		[ -s "$rootFS".files.exe.dlapi.all ] && logFile "$rootFS".files.exe.dlapi.all "All execs, dlapi" "$name".log
+
+		# all libs files containing libdl api calls
+		[ -s "$rootFS".files.so.dlapi.all ] && logFile "$rootFS".files.so.dlapi.all "All libs, dlapi" "$name".log
 	fi
 fi
 
@@ -763,19 +813,19 @@ if [ -n "$dload" ]; then
 		fi
 	fi
 
-	#iter=1
-	while read libdldExe
+	iter=1
+	while read dlapiExe
 	do
-		#printf "%-2d: libdldExe=%s\n" "$iter" "$libdldExe" | tee -a "$name".log
-		outFile=$(echo "$libdldExe" | tr '/' '%')
-		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder
-		_rootFSDLoadElfAnalyzer "$rfsFolder" "$libdldExe" $outFile "$wFolderPfx"
-		#((iter++))
-	done < "$rootFS".files.exe.dlink-libdld.dlapi.short
+		printf "%-2d: dlapiExe = %s\n" "$iter" "$dlapiExe" | tee -a "$name".log
+		outFile=$(echo "$dlapiExe" | tr '/' '%')
+		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder
+		_rootFSDLoadElfAnalyzer "$rfsFolder" "$dlapiExe" $outFile "$wFolderPfx" "$rdbgFolder"
+		((iter++))
+	done < "$rootFS".files.exe.dlink-libdl.dlapi.short
 
 	#Cleanup
 	find $rfsSymsFolder -maxdepth 1 -size 0 -exec rm {} \;
-#	find $rfsDLoadFolder -maxdepth 1 -size 0 -exec rm {} \;
+	find $rfsDLoadFolder -maxdepth 1 -size 0 -exec rm {} \;
 fi
 
 if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
@@ -818,16 +868,16 @@ if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
 		#iter=1
 		while read exe
 		do
-			#printf "%-2d: exe=%s\n" "$iter" "$exe"
+			#printf "%-2d: exe = %s\n" "$iter" "$exe"
 			outFile=$(echo "$exe" | tr '/' '%')
-			_rootFSNssElfAnalyzer "$rfsFolder" "$exe" "$rfsNssFolder/$outFile"
+			_rootFSNssElfAnalyzer "$rfsFolder" "$exe" "$rfsNssFolder/$outFile" "$rdbgFolder"
 			#((iter++))
 		done < "$rootFS".files.elf.analyze.short
 	fi
 
 	# Cleanup
 	rm -f "$rfsNssFolder"/nss.short "$rfsNssFolder"/nss.dlink.short
-#	find $rfsNssFolder -maxdepth 1 -size 0 -exec rm {} \;
+	find $rfsNssFolder -maxdepth 1 -size 0 -exec rm {} \;
 fi
 
 if [ -n "$dlink" ] && [ -n "$nss" ] && [ -n "$dload" ]; then
@@ -1017,6 +1067,8 @@ if [ -n "$rdbgFolder" ]; then
 fi
 
 # Cleanup
+find $odTCDFUNDFolder $odTCDFtextFolder -maxdepth 1 -size 0 -exec rm {} \;
+
 rm -f "$rootFS".files.so.dlink.short "$rootFS".files.so.unrefed.short
 rm -f "$rootFS".files.exe.all.short "$rootFS".files.so.all.short
 if [ -n "$usedFiles" ]; then
