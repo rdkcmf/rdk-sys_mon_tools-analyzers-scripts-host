@@ -393,22 +393,24 @@ function _elfSymRefSources
 # $1 - folder	-a folder with a list of apps and dependent dynamically linked libraries, as .dlink
 # $2 - filename	-a list of shared libraries to analyze
 # $3 - logname	-an output log file
+# $4 - ext	-an optional file extension in the folder to look for; all files are analyzed if empty
 # _soRefedByApp $_folder $_soList $_log
 function _soRefedByApp()
 {
 	local _folder="$1"
 	local _soList="$2"
 	local _log="$3"
+	local _ext="$4"
 
+	cat /dev/null > "$_log"
 	if [ -s "$_soList" ]; then
-		cat /dev/null > "$_log"
 		local _elf=
 		local _refed=
 		local _byte=${#_folder}
 		_byte=$((_byte+2))
 		while read _elf
 		do
-			grep "^$_elf$" "$_folder"/*.dlink | cut -d ":"  -f1 | cut -b$_byte- | tr '%' '/' | sort > "$_soList".elf
+			grep -H "^$_elf$" "$_folder"/*"$_ext" | cut -d ":"  -f1 | cut -b$_byte- | tr '%' '/' | sort > "$_soList".elf
 			printf "%-4d %s:" $(wc -l $"$_soList".elf | cut -d ' ' -f1) "$_elf" >> "$_log"
 			while read _refed
 			do
@@ -844,11 +846,13 @@ function _rootFSSymbsElfAnalyzer()
 # $3 - an output file name
 # $4 - work folder
 # $5 - rdbg folder
+# $6 - user validation so "set" list
+
 # Output:
 # ELF file dynamically loaded library list = $rfsDLoadFolder/<output file base name>.dload = $rfsDLoadFolder/<$4 base name>
 # ELF file dynamically loaded library list log = $rfsDLoadFolder/<output file base name>.dload.log
 
-# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder
+# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv so set
 
 function _rootFSDLoadElfAnalyzer()
 {
@@ -857,6 +861,7 @@ function _rootFSDLoadElfAnalyzer()
 	local _out="$3"
 	local _wFolder="$4"
 	local _rdbgFolder="$5"
+	local _uvsoset="$6"
 
 	local _outBase="$(basename "$_out")"
 	local _dlinkOutBase="$rfsDLinkFolder/$_outBase".dlink
@@ -916,7 +921,12 @@ function _rootFSDLoadElfAnalyzer()
 		cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
 		while read _elfDLoad
 		do
-			printf "\t%-2d: elfDLoad=%s\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
+			if [ -n "$_uvsoset" ] && [ -s "$_uvsoset" ] && [ -n "$(comm -12 "$_uvsoset" <(echo "$_elfDLoad"))" ]; then
+				printf "\t%-2d: elfDLoad = %s skipped\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
+				continue
+			fi
+
+			printf "\t%-2d: elfDLoad = %s\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
 			local _elfDLoadP=$(echo $_elfDLoad | tr '/' '%')
 			#[ -e $rfsDLoadFolder/$_elfDLoadP.dload ] && continue
 			local _outElfBase="$(basename "$_elfDLoadP")"
