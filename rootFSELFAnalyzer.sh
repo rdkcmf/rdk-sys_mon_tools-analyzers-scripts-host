@@ -1142,6 +1142,7 @@ fi
 
 # Cleanup
 find $odTCDFUNDFolder $odTCDFtextFolder -maxdepth 1 -size 0 -exec rm {} \;
+find ./ \( -name "*.str-symb" -o -name "*.libdl.user*" -o -name "*.dC" \) -exec rm {} \;
 
 rm -f "$rootFS".files.so.dlink.short "$rootFS".files.so.unrefed.short
 rm -f "$rootFS".files.exe.all.short "$rootFS".files.so.all.short

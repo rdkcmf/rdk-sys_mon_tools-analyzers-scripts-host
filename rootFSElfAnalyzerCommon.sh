@@ -256,6 +256,7 @@ function _getElfDbgPath()
 # $4 - output file name
 # $5 - rootFS dbg folder
 # $6 - an optional service type - nss, libdlapi or none if empty
+# $7 - an optional symbol name
 # Output:
 # "symbol name - source code location" structured file
 # "symbol name - source code location" log =<output file name>.log
@@ -270,22 +271,32 @@ function _sraddr2line()
 	local _out="$4"
 	local _rdbgFolder="$5"
 	local _service="$6"
+	local _symb="$7"
 
-	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n\n" \
-	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elf" "$_elf" "symList" "$_symList" "out" "$_out" "rdbgFolder" "$_rdbgFolder" "service" "$_service"
+	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n\n" \
+	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elf" "$_elf" "symList" "$_symList" "out" "$_out" "rdbgFolder" "$_rdbgFolder" "service" "$_service" "symb" "$_symb" >> "$name".log
 
 	# Build a symbol file if it's not built
-	if [ ! -s "$_out".gentry.all ]; then
+	if [ ! -e "$_out".gentry.all ]; then
 		sed '1,/Global entries:/d' <(readelf -AW "$_rfsFolder/$_elf" | c++filt) | grep " FUNC " | sed '1d;s/^ .//;/^$/d' | \
 			sed 's/ \+/ /g;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1;s/ /\t/1' | sort -t$'\t' -k7,7 -o "$_out".gentry.all
 	fi
 
-	if [ ! -e "$_out$_service".gentry.user ]; then
-		if [ -n "$_symList" ]; then
-			join -t$'\t' -1 1 -2 7 <(sort "$_symList") "$_out".gentry.all -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7 > "$_out$_service".gentry.user
-		else
-			ln -sf "$PWD/$_out".gentry.all "$_out$_service".gentry.user
-		fi
+	if [ -n "$_symb" ] && [ -e "$PWD/$_out$_service".user."$_symb" ]; then
+		#echo "skipping $PWD/$_out$_service.user."$_symb >> "$name".log
+		return
+	elif [ -z "$_symList" ] && [ -z "$_symb" ] && [ -e "$PWD/$_out".gentry.all ]; then
+		#echo "skipping $PWD/$_out.gentry.all" >> "$name".log
+		return
+	fi
+
+	if [ -n "$_symList" ]; then
+		join -t$'\t' -1 1 -2 7 <(sort "$_symList") "$_out".gentry.all -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7 > "$_out$_service".gentry.user
+	elif [ -n "$_symb" ]; then
+		join -t$'\t' -1 1 -2 7 <(echo "$_symb") "$_out".gentry.all -o 2.1,2.2,2.3,2.4,2.5,2.6,2.7 > "$_out$_service".user."$_symb"
+		ln -sf "$PWD/$_out$_service".user."$_symb" "$_out$_service".gentry.user
+	else
+		ln -sf "$PWD/$_out".gentry.all "$_out$_service".gentry.user
 	fi
 
 	# Disassemble the elf
@@ -299,19 +310,21 @@ function _sraddr2line()
 
 	while IFS=$'\t' read _addr _access _initial _symval _type _ndx _name
 	do
-		grep -w -- "$_access" "$_out".dC | cut -f1 | cut -d ':' -f1 > "$_out.usr.$_name"
-		addr2line -Cpfa -e "$_elfPath" @"$_out.usr.$_name" | cut -d ' ' -f2- > "$_out.usr.$_name.tmp"
-		mv "$_out.usr.$_name.tmp" "$_out.usr.$_name"
+		grep -w -- "$_access" "$_out".dC | cut -f1 | cut -d ':' -f1 | addr2line -Cpfa -e "$_elfPath" | cut -d ' ' -f2- > "$_out.usr.$_name"
 	done < "$_out$_service".gentry.user
+
+	rm -f "$_out$_service".gentry.user
 }
 
 # Input:
 # $1 - rootFS folder
 # $2 - a list of target (full path) ELF filenames
-# $3 - symbol list file; all symbols are analyzed if the name is empty
+# $3 - symbol list file; all symbols are analyzed if the $3 name or the symbol $7 name is empty 
 # $4 - output file folder
 # $5 - output file postfix
 # $6 - rootFS dbg folder
+# $7 - service type
+# $8 - symbol name
 # Output:
 
 # Use cases:
@@ -326,9 +339,10 @@ function _elfSymRefSources
 	local _pfx="$5"
 	local _rdbgFolder="$6"
 	local _service="$7"
+	local _symb="$8"
 
-	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" \
-	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elfList" "$_elfList" "symList" "$_symList" "out" "$_out" "pfx" "$_pfx" "rdbgFolder" "$_rdbgFolder" "service" "$_service"
+	#printf "%s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n%-12s = %s\n" \
+	#"$FUNCNAME:" "rfsFolder" "$_rfsFolder" "elfList" "$_elfList" "symList" "$_symList" "out" "$_out" "pfx" "$_pfx" "rdbgFolder" "$_rdbgFolder" "service" "$_service" "symb" "$_symb"
 
 	local _elf=
 	while read _elf
@@ -337,11 +351,11 @@ function _elfSymRefSources
 		local _log="$_out/$_elfP$_pfx".log
 		local _none=true
 
-		if [ -s "$odTCDFUNDFolder/$_elfP$_service".gentry.user ]; then
-			#printf "%s: skipping %s\n" "$FUNCNAME" "$odTCDFUNDFolder/$_elfP$_service".gentry.user >> "$name".log
-			continue
-		fi
-		_sraddr2line "$_rfsFolder" "$_elf" "$_symList" "$odTCDFUNDFolder/$_elfP" "$_rdbgFolder" "$_service"
+		#if [ -s "$odTCDFUNDFolder/$_elfP$_service".gentry.user ]; then
+		#	printf "%s: skipping %s\n" "$FUNCNAME" "$odTCDFUNDFolder/$_elfP$_service".gentry.user >> "$name".log
+		#	continue
+		#fi
+		_sraddr2line "$_rfsFolder" "$_elf" "$_symList" "$odTCDFUNDFolder/$_elfP" "$_rdbgFolder" "$_service" "$_symb"
 
 		local _ref=
 		cat /dev/null > "$_log"
@@ -365,6 +379,14 @@ function _elfSymRefSources
 			else
 				printf "%-37s:\tnone\n" "$_elf" >> "$_log"
 			fi
+		elif [ -n "$_symb" ]; then
+			if [ -s "$odTCDFUNDFolder/$_elfP".usr."$_symb" ]; then
+				printf "\t%s:\n" "$_symb" >> "$_log".tmp
+				sed 's/^/\t\t/' "$odTCDFUNDFolder/$_elfP".usr."$_symb" >> "$_log".tmp
+				_none=false
+			else
+				printf "\t%s:\tnone\n" "$_symb" >> "$_log".tmp
+			fi
 		else
 			for _ref in "$odTCDFUNDFolder/$_elfP".usr.* 
 			do
@@ -387,6 +409,40 @@ function _elfSymRefSources
 		#cleanup
 		rm -f "$_log".tmp
 	done < "$_elfList"
+}
+
+
+# Function: _logElfSymRefSources
+# $1 - rfsf	-a rootFS folder
+# $2 - elf	-an elf
+# $3 - symb	-a symbol
+# $4 - outb	-an outbase
+# $5 - outf	-an output folder
+# $6 - log	-an output log file
+# $7 - dbg	-a rootFS dbg folder
+# $8 - service	-a service type
+
+function _logElfSymRefSources()
+{
+	local _rfsFolder="$1"
+	local _elf="$2"
+	local _symb="$3"
+	local _outb="$4"
+	local _outf="$5"
+	local _log="$6"
+	local _rdbgFolder="$7"
+	local _serv="$8"
+
+	echo "$_elf" > "$_outb".file
+	# _elfSymRefSources "rfsFolder" "elf list"          "symbol list"      "out folder"      "postfix" "dbg folder" "service" "symb"
+	_elfSymRefSources "$_rfsFolder" "$_outb".file "" "$_outf/" "" "$_rdbgFolder" "$_serv" "$_symb"
+	if [ -e "$_outf/$_outb".usr.$_symb ]; then
+		printf "\t\t%-20s :\t\t%s (%d)\n" "$_symb refs" "$_outf/$_outb".usr.$_symb $(wc -l "$_outf/$_outb".usr.$_symb | cut -d ' ' -f1) >> "$_log"
+	else
+		printf "\t\t%-20s :\t\t%s (%d)\n" "$_symb refs" "$_outf/$_outb".usr.$_symb 0 >> "$_log"
+	fi
+
+	rm -f "$_outb".*
 }
 
 # Function: _soRefedByApp
@@ -565,7 +621,7 @@ function _rootFSDLinkElfAnalyzer()
 				# _elfSymRefSources "rfsFolder" "elf list"    "symbol list"                "out folder"      "postfix"      "dbg folder"   "service"
 				_elfSymRefSources "$_rfsFolder" "$_out".libdl "$odTCDFtextFolder"/libdlApi "$rfsLibdlFolder" ".dlink.libdl" "$_rdbgFolder" ".libdl"
 			else
-				printf "skipping $rfsLibdlFolder/$_out.libdl.log generation !\n"
+				printf "skipping $rfsLibdlFolder/$_out.libdl.log generation !\n" | tee -a "$name".log
 			fi
 		else
 			printf "missing $odTCDFtextFolder/libdlApi file!\n" >> "$_out".libdl.error
@@ -686,8 +742,8 @@ function _rootFSNssSingleElfAnalyzer()
 		comm -12 "$rfsNssFolder/$_nss_service_api" "$odTCDFUNDFolder/$_elfP".odTC-DFUND > "$rfsNssFolder/$_elfP.$_nss_service_api.deps"
 		if [ -s "$rfsNssFolder/$_elfP.$_nss_service_api.deps" ]; then
 			printf "\t%s\t:\n" "$_nss_service_api" >> "$_nssOut"
-			#_sraddr2line "$rfsFolder" "$elf" "$symList" "$odTCDFUNDFolder/$elfBase" "$_rdbgFolder" "service"
-			_sraddr2line "$_rfsFolder" "$_elf" "$rfsNssFolder/$_elfP.$_nss_service_api.deps" "$odTCDFUNDFolder/$_outBase" "$_rdbgFolder" ".nss"
+			#_sraddr2line "$rfsFolder" "$elf" "$symList" "$odTCDFUNDFolder/$elfBase" "$_rdbgFolder" "service" "symb"
+			_sraddr2line "$_rfsFolder" "$_elf" "$rfsNssFolder/$_elfP.$_nss_service_api.deps" "$odTCDFUNDFolder/$_outBase" "$_rdbgFolder" ".nss" ""
 			local _line=
 			while read _line
 			do
@@ -834,8 +890,8 @@ function _rootFSSymbsElfAnalyzer()
 #		else
 #			rm -f "$_wFolder/$_elfP-$_soFileP".str-symb
 		fi
-	# Don't check <this> shared object
-	done < <(grep -v "^$_elf$" "$_libs")
+		rm -f "$_wFolder/$_elfP-$_soFileP".str-symb
+	done < "$_libs"
 }
 
 
@@ -954,7 +1010,7 @@ function _rootFSDLoadElfAnalyzer()
 			# Identify an elf's obj dependencies on $libdlDefault api
 			libdlApi="$(comm -12 <(cut -f2- "$odTCDFtextFolder/$libdlDefaultP".odTC-DFtext) "$odTCDFUNDFolder/$_outElfBase".odTC-DFUND)"
 			if [ -z "${libdlApi}" ]; then
-				printf "%-36s : dlapi =\n" "$_elfDLoad" >> "$_dloadLog"
+				#printf "%-36s : dlapi =\n" "$_elfDLoad" >> "$_dloadLog"
 				continue
 			fi
 
@@ -988,54 +1044,56 @@ function _rootFSDLoadElfAnalyzer()
 
 				if [ -s "$_dlopenOut" ]; then
 					cat "$_dlopenOut" >> "$_dloadOut"
-					printf "\t%-28s : %s (%d)\n" "dlopen" "$_dlopenOut" $(wc -l "$_dlopenOut" | cut -d ' ' -f1) >> "$_dloadLog"
+					printf "\t%-28s : %s (%d)\n" "dlopen libs" "$_dlopenOut" $(wc -l "$_dlopenOut" | cut -d ' ' -f1) >> "$_dloadLog"
 				else
-					printf "\t%-28s : not found\n" "dlopen" >> "$_dloadLog"
+					printf "\t%-28s : not found\n" "dlopen libs" >> "$_dloadLog"
 					rm -f "$_dlopenOut"
 				fi
 
-				echo "$_elfDLoad" > "$_outElfBase".file
-				echo "dlopen" > "$_outElfBase".sym
-				# _elfSymRefSources "rfsFolder" "elf list"          "symbol list"      "out folder"      "postfix" "dbg folder" "service"
-				_elfSymRefSources "$_rfsFolder" "$_outElfBase".file "$_outElfBase".sym "$odTCDFUNDFolder/" "" "$_rdbgFolder" ".libdl"
-				if [ -e "$odTCDFUNDFolder/$_outElfBase".usr.dlopen ]; then
-					printf "\t\t%-20s :\t\t%s (%d)\n" "dlopen refs" "$odTCDFUNDFolder/$_outElfBase".usr.dlopen $(wc -l "$odTCDFUNDFolder/$_outElfBase".usr.dlopen | cut -d ' ' -f1) >> "$_dloadLog"
-				else
-					printf "\t\t%-20s :\t\t%s (%d)\n" "dlopen refs" "$odTCDFUNDFolder/$_outElfBase".usr.dlopen 0 >> "$_dloadLog"
-				fi
-				rm -f "$_outElfBase".*
+				_logElfSymRefSources "$_rfsFolder" "$_elfDLoad" "dlopen" "$_outElfBase" "$odTCDFUNDFolder" "$_dloadLog" "$_rdbgFolder" ".libdl"
 			fi
 
 			if [[ "$libdlApi" == *dlsym* ]]; then
 				# Find a list of shared objects that have strings matching valid c/cpp identifiers/symbols
-				_rootFSSymbsElfAnalyzer "$_elfDLoad" <(comm -23 "$rootFS".files.so.all.short "$_dlinkOut") "$rfsSymsFolder" "$odTCDFtextFolder" "$_dlsymsOut" "$_rdbgFolder"
+				#_rootFSSymbsElfAnalyzer : $1 - elf : $2 - libs list to analyze : $3 - analysis folder : $4 - dyn symbol table folder : $5 - out file name : $6 - rdbg folder
+				# Remove exe's dlink, <this> lib's dlink and this lib libraries from analysis
+				comm -23 "$rootFS".files.so.all.short <(sort -u "$_dlinkOutBase" "$_dlinkOut" <(echo "$_elfDLoad")) > "$_symbsBase".libs
+				_rootFSSymbsElfAnalyzer "$_elfDLoad" "$_symbsBase".libs "$rfsSymsFolder" "$odTCDFtextFolder" "$_dlsymsOut" "$_rdbgFolder"
 				if [ -s "$_dlsymsOut" ]; then
 					cat "$_dlsymsOut" >> "$_dloadOut"
-					printf "\t%-28s : %s (%d)\n" "dlsym" "$_dlsymsOut" $(wc -l "$_dlsymsOut" | cut -d ' ' -f1) >> "$_dloadLog"
+					printf "\t%-28s : %s (%d)\n" "dlsym libs" "$_dlsymsOut" $(wc -l "$_dlsymsOut" | cut -d ' ' -f1) >> "$_dloadLog"
+				else
+					printf "\t%-28s : not found\n" "dlsym libs" >> "$_dloadLog"
+					rm -f "$_dlsymsOut"
+				fi
+				rm "$_symbsBase".libs
+
+				_logElfSymRefSources "$_rfsFolder" "$_elfDLoad" "dlsym" "$_outElfBase" "$odTCDFUNDFolder" "$_dloadLog" "$_rdbgFolder" ".libdl"
+
+				if [ -s "$_dlsymsOut" ]; then
 					local _dlsymsOutFile=
 					while read _dlsymsOutFile; do
 						local _dlsymsOutFileP=$(echo "$_dlsymsOutFile" | tr '/' '%')
 						if [ -e "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" ]; then
-							printf "\t\t%-20s :\t\t%s (%d)\n" "dlsym refs" "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" \
+							printf "\t\t%-20s :\t\t%s (%d)\n" "dlsym symb matches" "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" \
 							$(wc -l "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" | cut -d ' ' -f1) >> "$_dloadLog"
 						else
-							printf "\t\t%-20s :\t\t%s (%d)\n" "dlsym refs" "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" 0 >> "$_dloadLog"
+							printf "\t\t%-20s :\t\t%s (%d)\n" "dlsym symb matches" "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" 0 >> "$_dloadLog"
 						fi
 					done < "$_dlsymsOut"
 				else
-					printf "\t%-28s : not found\n" "dlsym" >> "$_dloadLog"
 					rm -f "$_dlsymsOut"
 				fi
 			fi
 
 			if [ -s "$_dloadOut" ]; then
 				sort -u "$_dloadOut" -o "$_dloadOut"
-				printf "\t%-28s : %s (%d)\n" "dloaded" "$_dloadOut" $(wc -l "$_dloadOut" | cut -d ' ' -f1) >> "$_dloadLog"
+				printf "\t%-28s : %s (%d)\n" "dloaded libs" "$_dloadOut" $(wc -l "$_dloadOut" | cut -d ' ' -f1) >> "$_dloadLog"
 				cat "$_dloadOut" >> "$_dloadOutAll"
 
 				comm -12 "$_dloadOut" "$rootFS".files.elf.dlapi.all.short >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
 			else
-				printf "\t%-28s : not found\n" "dloaded" >> "$_dloadLog"
+				printf "\t%-28s : not found\n" "dloaded libs" >> "$_dloadLog"
 			fi
 
 			cat <(echo $_elfDLoad) "$_dloadOut" "$_dlinkOut" >> $rfsDLoadFolder/$_outBase.dload+dlink.all
