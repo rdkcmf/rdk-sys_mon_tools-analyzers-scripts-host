@@ -559,6 +559,7 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 
 	# ELF dlapi identification
 	cat /dev/null > "$rootFS".files.elf.dlapi.all.short
+	cat /dev/null > "$rootFS".files.elf.dlapi.table
 	while read filename
 	do
 		outFile=$(echo "$filename" | tr '/' '%').odTC-DFUND
@@ -824,15 +825,15 @@ if [ -n "$dload" ]; then
 				comm -12 "$rootFS".files.so.dlapi.all.short "$uvFolder".ads > "$uvFolder".so.ads
 
 				# validate user input
-				sort "$uvFolder".exe.ads "$uvFolder".so.ads -o "$uvFolder".ads.tmp
-				comm -13 "$uvFolder".ads.tmp "$uvFolder".ads > "$uvFolder".ads.no-dlapi-elfs
+				sort "$uvFolder".exe.ads "$uvFolder".so.ads -o "$uvFolder".elf.ads
+				comm -13 "$uvFolder".elf.ads "$uvFolder".ads > "$uvFolder".ads.no-dlapi-elfs
 				if [ -s "$uvFolder".ads.no-dlapi-elfs ]; then
 					echo "$name# Warn  : \"$uvFolder\" folder contains not libdl api dependent elfs! See \"$uvFolder.ads.no-dlapi-elfs\"" | tee -a "$name".log
 				else
 					rm "$uvFolder".ads.no-dlapi-elfs
 				fi
 
-				mv "$uvFolder".ads.tmp "$uvFolder".ads
+				mv "$uvFolder".elf.ads "$uvFolder".ads
 			fi
 		fi
 
@@ -868,12 +869,13 @@ if [ -n "$dload" ]; then
 	iter=1
 	cat /dev/null > "$rootFS".files.exe.dlink-libdl.dlapi.parsed
 	[ -s "$uvFolder".so.set ] && uvsoset="$uvFolder".so.set || uvsoset=
+	[ -s "$uvFolder".so.ads ] && uvsoads="$uvFolder".so.ads || uvsoads=
 	while read dlapiExe
 	do
 		printf "%-2d: dlapiExe = %s\n" "$iter" "$dlapiExe" | tee -a "$name".log
 		outFile=$(echo "$dlapiExe" | tr '/' '%')
-		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv so set
-		_rootFSDLoadElfAnalyzer "$rfsFolder" "$dlapiExe" $outFile "$wFolderPfx" "$rdbgFolder" "$uvsoset"
+		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv so set : $7 - uv so ads
+		_rootFSDLoadElfAnalyzer "$rfsFolder" "$dlapiExe" $outFile "$wFolderPfx" "$rdbgFolder" "$uvsoset" "$uvsoads"
 
 		printf "%s:\n" "$dlapiExe" >> "$rootFS".files.exe.dlink-libdl.dlapi.parsed
 		# log parsed execs along with dependent libdl api libs
