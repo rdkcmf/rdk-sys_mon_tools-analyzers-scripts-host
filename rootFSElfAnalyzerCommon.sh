@@ -556,7 +556,7 @@ function _rootFSDLinkElfAnalyzer()
 				if [ -s "$_elfP".elffound.tmp ]; then 
 					cat "$_elfP".elffound.tmp >> "$_elfP".elffound
 				else
-					printf "%1d: unresolved entry: %s\n" $_iter "${_entry/$_rfsFolder//}" | tr -s '/' >> "$_out".error
+					printf "%1d: %s: unresolved entry: %s : \"%s\" / \"%s\"\n" $_iter "$_elfP" "${_entry/$_rfsFolder//}" "$_elf" "$_elfRefs" | tr -s '/' >> "$_out".error
 				fi
 			fi
 		done < "$_elfP".elfrefs
@@ -575,7 +575,7 @@ function _rootFSDLinkElfAnalyzer()
 					fi
 				fi
 			else
-				printf "%1d: unresolved link : %s\n" $_iter "${_entry/$_rfsFolder//}" | tr -s '/' >> "$_out".error
+				printf "%1d: %s: unresolved link : %s\n" $_iter "$_elfP" "${_entry/$_rfsFolder//}" | tr -s '/' >> "$_out".error
 			fi
 		done < "$_elfP".elffound
 		sort -u "$_elfP.$_iter".short -o "$_elfP.$_iter".short
@@ -900,14 +900,15 @@ function _rootFSSymbsElfAnalyzer()
 # $3 - an output file name
 # $4 - work folder
 # $5 - rdbg folder
-# $6 - user validation so "set" list
-# $7 - user validation so "ads" list
+# $6 - user validation elf "set" list
+# $7 - user validation elf "ads" list
+# $8 - user validation ldp exe list
 
 # Output:
 # ELF file dynamically loaded library list = $rfsDLoadFolder/<output file base name>.dload = $rfsDLoadFolder/<$4 base name>
 # ELF file dynamically loaded library list log = $rfsDLoadFolder/<output file base name>.dload.log
 
-# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv so set : $7 - uv so ads
+# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv elf set : $7 - uv elf ads : $8 uv ldp exe
 
 function _rootFSDLoadElfAnalyzer()
 {
@@ -916,8 +917,9 @@ function _rootFSDLoadElfAnalyzer()
 	local _out="$3"
 	local _wFolder="$4"
 	local _rdbgFolder="$5"
-	local _uvsoset="$6"
-	local _uvsoads="$7"
+	local _uvelfset="$6"
+	local _uvelfads="$7"
+	local _uvldp="$8"
 
 	local _outBase="$(basename "$_out")"
 	local _dlinkOutBase="$rfsDLinkFolder/$_outBase".dlink
@@ -958,13 +960,50 @@ function _rootFSDLoadElfAnalyzer()
 
 	# create a list of dlapi dependent libs and an exe
 	cat /dev/null > "$rfsDLoadFolder/$_outBase".dlink.dlapi
+	if [ -n "$_uvldp" ] && [ -s "$_uvldp" ] && [ -n "$(comm -12 "$_uvldp" <(echo "$_elf"))" ]; then
+		local _elfP=$(echo $_elf | tr '/' '%')
+		printf "%-36s :\n" "$_elf" >> "$_dloadLog"
+
+		if [ -s "$uvFolder/$_elfP".uv.ldp ]; then
+			printf "\t%-28s : %s (%d)\n" "all user ldp added libs" "$uvFolder/$_elfP".uv.ldp $(wc -l "$uvFolder/$_elfP".uv.ldp | cut -d ' ' -f1) | tee -a "$_dloadLog"
+		fi
+
+		if [ -s "$uvFolder/$_elfP".uv.ldp.dlapi ]; then
+			printf "\t%-28s : %s (%d)\n" "user ldp dlapi added libs" "$uvFolder/$_elfP".uv.ldp.dlapi $(wc -l "$uvFolder/$_elfP".uv.ldp.dlapi | cut -d ' ' -f1) | tee -a "$_dloadLog"
+			cat "$uvFolder/$_elfP".uv.ldp.dlapi >> "$rfsDLoadFolder/$_outBase".dlink.dlapi
+		fi
+
+		if [ -s "$uvFolder/$_elfP".uv.ldp.nodlapi ]; then
+			printf "\t%-28s : %s (%d)\n" "user ldp nodlapi added libs" "$uvFolder/$_elfP".uv.ldp.nodlapi $(wc -l "$uvFolder/$_elfP".uv.ldp.nodlapi | cut -d ' ' -f1) | tee -a "$_dloadLog"
+			#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name 
+			# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
+			_rootFSDLinkElfAnalyzer "$_rfsFolder" "" "$uvFolder/$_elfP".uv.ldp.nodlapi "$uvFolder/$_elfP".uv.ldp.nodlapi.dlink "" "" "$rdbgFolder" ""
+			sort "$uvFolder/$_elfP".uv.ldp.nodlapi.dlink -o "$uvFolder/$_elfP".uv.ldp.nodlapi.dlink
+
+			comm -1 "$rootFS".files.elf.dlapi.all.short "$uvFolder/$_elfP".uv.ldp.nodlapi.dlink | awk -F'\t' -v base="$uvFolder/$_elfP".uv.ldp.nodlapi '{\
+				if (NF == 2) {\
+					printf("%s\n", $2) > base".dlapi"
+				} else if (NF == 1) {\
+					printf("%s\n", $1) > base".nodlapi"
+				}\
+				}'
+		fi
+
+		if [ -s "$uvFolder/$_elfP".uv.ldp.nodlapi.dlapi ]; then
+			printf "\t%-28s : %s (%d)\n" "user ldp nodlapi dlapi added libs" "$uvFolder/$_elfP".uv.ldp.nodlapi.dlapi $(wc -l "$uvFolder/$_elfP".uv.ldp.nodlapi.dlapi | cut -d ' ' -f1) | tee -a "$_dloadLog"
+			cat "$uvFolder/$_elfP".uv.ldp.nodlapi.dlapi >> "$rfsDLoadFolder/$_outBase".dlink.dlapi
+		fi
+	fi
+
 	comm -1 "$rootFS".files.elf.dlapi.all.short <(sort <(cat "$_dlinkOutBase" <(echo "$_elf"))) | awk -F'\t' -v base="$rfsDLoadFolder/$_outBase" '{\
-	if (NF == 2) {\
-		printf("%s\n", $2) > base".dlink.dlapi"
-	} else if (NF == 1) {\
-		printf("%-36s : dlapi =\n", $1) > base".dload.log"
-	}\
-	}'
+		if (NF == 2) {\
+			printf("%s\n", $2) >> base".dlink.dlapi"
+		} else if (NF == 1) {\
+			printf("%-36s : dlapi =\n", $1) >> base".dload.log"
+		}\
+		}'
+
+	sort -u "$rfsDLoadFolder/$_outBase".dlink.dlapi -o "$rfsDLoadFolder/$_outBase".dlink.dlapi
 
 	ln -sf "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi "$rfsDLoadFolder/$_outBase".dlink.dlapi.link
 
@@ -978,22 +1017,44 @@ function _rootFSDLoadElfAnalyzer()
 		while read _elfDLoad
 		do
 			local _elfDLoadP=$(echo $_elfDLoad | tr '/' '%')
-			if [ -n "$_uvsoset" ] && [ -s "$_uvsoset" ] && [ -n "$(comm -12 "$_uvsoset" <(echo "$_elfDLoad"))" ]; then
-				printf "%-36s : %s\n" "$_elfDLoad" "user skipped" >> "$_dloadLog"
-				printf "\t%-28s : %s\n" "uv libs skipped" "$_elfDLoad"
-				if [ -s $uvFolder/$_elfDLoadP.uv.set ]; then
-					_uvsosetdlapi=$(comm -12 $uvFolder/$_elfDLoadP.uv.set "$rootFS".files.elf.dlapi.all.short)
-					if [ -n "$_uvsosetdlapi" ]; then
-						echo "$_uvsosetdlapi" | tr ' ' '\n' >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
-						printf "%-36s : contains dlapi libs : %s\n" "" "$_uvsosetdlapi" >> "$_dloadLog"
+			local _outElfBase="$(basename "$_elfDLoadP")"
+
+			if [ -n "$_uvelfset" ] && [ -s "$_uvelfset" ] && [ -n "$(comm -12 "$_uvelfset" <(echo "$_elfDLoad"))" ]; then
+				#printf "%-36s : %s\n" "$_elfDLoad" "user set libs" >> "$_dloadLog"
+				if [ -s "$uvFolder/$_elfDLoadP".uv.set ]; then
+					local _uvset=$(wc -l "$uvFolder/$_elfDLoadP".uv.set | cut -d ' ' -f1)
+					printf "\t%-28s : %s (%d)\n" "user set libs" "$uvFolder/$_elfDLoadP".uv.set $_uvset | tee -a "$_dloadLog"
+
+					#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name 
+					# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
+					_rootFSDLinkElfAnalyzer "$_rfsFolder" "" "$uvFolder/$_elfDLoadP".uv.set "$uvFolder/$_elfDLoadP".uv.set.dlink "" "" "$rdbgFolder" ""
+
+					if [ ! -e "$rfsDLinkFolder/$_outElfBase".dlink ]; then
+						#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
+						# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
+						_rootFSDLinkElfAnalyzer "$_rfsFolder" "$_elfDLoad" "" "$rfsDLinkFolder/$_outElfBase".dlink "$_wFolder" "" "$_rdbgFolder" ""
 					fi
+
+					# remove elf's $_dlinkOutBase & $_dlinkOut dlink libs with an exception of dlapi libs
+					comm -23 "$uvFolder/$_elfDLoadP".uv.set.dlink \
+						<(comm -23 <(sort -u "$_dlinkOutBase" "$rfsDLinkFolder/$_outElfBase".dlink <(echo "$_elfDLoad")) "$rootFS".files.elf.dlapi.all.short) \
+						> "$rfsDLoadFolder/$_outElfBase".dload
+
+					printf "\t%-28s : %s (%d)\n" "dloaded libs" "$rfsDLoadFolder/$_outElfBase".dload $_uvset >> "$_dloadLog"
+
+					_uvelfsetdlapi=$(comm -12 "$uvFolder/$_elfDLoadP".uv.set.dlink "$rootFS".files.elf.dlapi.all.short)
+					if [ -n "$_uvelfsetdlapi" ]; then
+						echo "$_uvelfsetdlapi" | tr ' ' '\n' >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.next
+						printf "%-36s : contains dlapi libs : %s\n" "" "$_uvelfsetdlapi" >> "$_dloadLog"
+					fi
+				else
+					printf "\t%-28s : %s - %s\n" "user set libs" "$uvFolder/$_elfDLoadP".uv.set "missing or empty!" | tee -a "$_dloadLog"
 				fi
 				continue
 			fi
 
 			printf "\t%-2d: elfDLoad = %s\n" "$_iter" "$_elfDLoad" | tee -a "$name".log
 			#[ -e $rfsDLoadFolder/$_elfDLoadP.dload ] && continue
-			local _outElfBase="$(basename "$_elfDLoadP")"
 
 			_dloadOut="$rfsDLoadFolder/$_outElfBase".dload
 			_dlopenOut="$rfsDLoadFolder/$_outElfBase".dlopen
@@ -1026,7 +1087,7 @@ function _rootFSDLoadElfAnalyzer()
 
 			if [[ "$libdlApi" == *dlopen* ]] && [ ! -e "$_symbsBase".str-so ]; then
 				# 1. Find a list of shared objects in strings,
-				strings "$_rfsFolder/$_elfDLoad" | grep "\.so" | sort -u -o "$_symbsBase".str-so
+				strings "$_rfsFolder/$_elfDLoad" | grep -o "^lib[^ ]*\.so[^ ]*" | sort -u -o "$_symbsBase".str-so
 			fi
 			if [[ "$libdlApi" == *dlsym* ]] && [ ! -e "$_symbsBase".asyms ]; then
 				# 1. Find a list of ascii symbs (dlsym immediate operands) that are valid c/cpp identifiers,
@@ -1040,7 +1101,7 @@ function _rootFSDLoadElfAnalyzer()
 					"$_symbsBase".asyms
 			fi
 
-			if [ ! -s "$_dlinkOut" ]; then
+			if [ ! -e "$_dlinkOut" ]; then
 				#printf "dlink %s doesn't exist\n" "$_dlinkOut" >> "$name".log
 				#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 				# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
@@ -1049,20 +1110,34 @@ function _rootFSDLoadElfAnalyzer()
 				#printf "dlink %s exists\n" " $_dlinkOut" >> "$name".log
 			fi
 
-			ln -sf /dev/null $uvFolder.add.link
-			ln -sf /dev/null $uvFolder.del.link
-			if [ -n "$_uvsoads" ]; then
-				if [ -n "$(comm -12 <(echo "$_elfDLoad") "$_uvsoads")" ]; then
+			ln -sf /dev/null "$uvFolder".add.link
+			ln -sf /dev/null "$uvFolder".del.link
+			if [ -n "$_uvelfads" ]; then
+				if [ -n "$(comm -12 <(echo "$_elfDLoad") "$_uvelfads")" ]; then
 					if [ -s "$uvFolder/$_elfDLoadP".uv.add ]; then
-						printf "\t%-28s : %s\n" "user added libs" "$(cat $uvFolder/$_elfDLoadP.uv.add | tr '\n' ' ')" >> "$_dloadLog"
-						printf "\t%-28s : %s\n" "uv libs addition" "$(cat $uvFolder/$_elfDLoadP.uv.add | tr '\n' ' ')"
-						ln -sf $PWD/$uvFolder/$_elfDLoadP.uv.add $uvFolder.add.link
-						
+						printf "\t%-28s : %s (%d)\n" "user added libs" "$uvFolder/$_elfDLoadP".uv.add $(wc -l "$uvFolder/$_elfDLoadP".uv.add | cut -d ' ' -f1) | tee -a "$_dloadLog"
+						if [ ! -e "$uvFolder/$_elfDLoadP".uv.add.dlink ]; then
+							#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
+							# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
+							_rootFSDLinkElfAnalyzer "$_rfsFolder" "" "$uvFolder/$_elfDLoadP".uv.add "$uvFolder/$_elfDLoadP".uv.add.dlink "$_wFolder" "" "$_rdbgFolder" ""
+						fi
+						# remove elf's $_dlinkOutBase & $_dlinkOut dlink libs with an exception of dlapi libs
+						comm -23 "$uvFolder/$_elfDLoadP".uv.add.dlink <(comm -23 <(sort -u "$_dlinkOutBase" "$_dlinkOut" <(echo "$_elfDLoad")) "$rootFS".files.elf.dlapi.all.short) \
+							> "$uvFolder/$_elfDLoadP".uv.add.dlink.add
+
+						ln -sf "$PWD/$uvFolder/$_elfDLoadP".uv.add.dlink.add "$uvFolder".add.link
 					fi
 					if [ -s "$uvFolder/$_elfDLoadP".uv.del ]; then
-						printf "\t%-28s : %s\n" "user deleted libs" "$(cat $uvFolder/$_elfDLoadP.uv.del | tr '\n' ' ')" >> "$_dloadLog"
-						printf "\t%-28s : %s\n" "uv libs deletion" "$(cat $uvFolder/$_elfDLoadP.uv.del | tr '\n' ' ')"
-						ln -sf $PWD/$uvFolder/$_elfDLoadP.uv.del $uvFolder.del.link
+						printf "\t%-28s : %s (%d)\n" "user deleted libs" "$uvFolder/$_elfDLoadP".uv.del $(wc -l "$uvFolder/$_elfDLoadP".uv.del | cut -d ' ' -f1) | tee -a "$_dloadLog"
+						if [ ! -e "$uvFolder/$_elfDLoadP".uv.del.dlink ]; then
+							#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
+							# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
+							_rootFSDLinkElfAnalyzer "$_rfsFolder" "" "$uvFolder/$_elfDLoadP".uv.del "$uvFolder/$_elfDLoadP".uv.del.dlink "$_wFolder" "" "$_rdbgFolder" ""
+						fi
+						# remove app's $_dlinkOutBase & $_elfDLoadP dlink libs
+						comm -23 "$uvFolder/$_elfDLoadP".uv.del.dlink <(sort -u "$_dlinkOutBase" "$_dlinkOut") > "$uvFolder/$_elfDLoadP".uv.del.dlink.del
+
+						ln -sf "$PWD/$uvFolder/$_elfDLoadP".uv.del.dlink.del "$uvFolder".del.link
 					fi
 				fi
 			fi
@@ -1070,19 +1145,18 @@ function _rootFSDLoadElfAnalyzer()
 			if [[ "$libdlApi" == *dlopen* ]]; then
 				#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 				# : $5 - work folder : $6 - libdl deps : $7 - rdbg folder : $8 - iter log
-				_rootFSDLinkElfAnalyzer "$_rfsFolder" "$_elfDLoad" "$_symbsBase".str-so "$_symbsBase".str-so.dlink "$_wFolder" "libdl" "$_rdbgFolder" ""
+				_rootFSDLinkElfAnalyzer "$_rfsFolder" "" "$_symbsBase".str-so "$_symbsBase".str-so.dlink "$_wFolder" "" "$_rdbgFolder" ""
 
 				# 2. remove <this> dlapi elf and $_dlinkOut dlink libs
 				# 3. and compare the result with a list of all dlapi elfs to find libdl api libs only
 				#comm -12 <(comm -23 "$_symbsBase".str-so.dlink <(echo "$_elfDLoad")) "$rootFS".files.elf.dlapi.all.short > "$_dlopenOut"
-				comm -12 <(comm -23 "$_symbsBase".str-so.dlink <(sort -u $_dlinkOut $uvFolder.del.link <(echo "$_elfDLoad"))) "$rootFS".files.elf.dlapi.all.short > "$_dlopenOut"
+				comm -12 <(comm -23 "$_symbsBase".str-so.dlink <(sort -u "$_dlinkOut" "$uvFolder".del.link <(echo "$_elfDLoad"))) "$rootFS".files.elf.dlapi.all.short > "$_dlopenOut"
 
 				if [ -s "$_dlopenOut" ]; then
 					cat "$_dlopenOut" >> "$_dloadOut"
 					printf "\t%-28s : %s (%d)\n" "dlopen libs" "$_dlopenOut" $(wc -l "$_dlopenOut" | cut -d ' ' -f1) >> "$_dloadLog"
 				else
 					printf "\t%-28s : not found\n" "dlopen libs" >> "$_dloadLog"
-					rm -f "$_dlopenOut"
 				fi
 
 				_logElfSymRefSources "$_rfsFolder" "$_elfDLoad" "dlopen" "$_outElfBase" "$odTCDFUNDFolder" "$_dloadLog" "$_rdbgFolder" ".libdl"
@@ -1092,7 +1166,7 @@ function _rootFSDLoadElfAnalyzer()
 				# Find a list of shared objects that have strings matching valid c/cpp identifiers/symbols
 				#_rootFSSymbsElfAnalyzer : $1 - elf : $2 - libs list to analyze : $3 - analysis folder : $4 - dyn symbol table folder : $5 - out file name : $6 - rdbg folder
 				# Remove exe's dlink, <this> lib's dlink and this lib libraries from analysis
-				comm -23 "$rootFS".files.so.all.short <(sort -u "$_dlinkOutBase" $uvFolder.del.link "$_dlinkOut" <(echo "$_elfDLoad")) > "$_symbsBase".libs
+				comm -23 "$rootFS".files.so.all.short <(sort -u "$_dlinkOutBase" "$uvFolder".del.link "$_dlinkOut" <(echo "$_elfDLoad")) > "$_symbsBase".libs
 
 				_rootFSSymbsElfAnalyzer "$_elfDLoad" "$_symbsBase".libs "$rfsSymsFolder" "$odTCDFtextFolder" "$_dlsymsOut" "$_rdbgFolder"
 				if [ -s "$_dlsymsOut" ]; then
@@ -1100,7 +1174,6 @@ function _rootFSDLoadElfAnalyzer()
 					printf "\t%-28s : %s (%d)\n" "dlsym libs" "$_dlsymsOut" $(wc -l "$_dlsymsOut" | cut -d ' ' -f1) >> "$_dloadLog"
 				else
 					printf "\t%-28s : not found\n" "dlsym libs" >> "$_dloadLog"
-					rm -f "$_dlsymsOut"
 				fi
 				rm "$_symbsBase".libs
 
@@ -1117,12 +1190,13 @@ function _rootFSDLoadElfAnalyzer()
 							printf "\t\t%-20s :\t\t%s (%d)\n" "dlsym symb matches" "$rfsSymsFolder/$_elfDLoadP-$_dlsymsOutFileP.str-symb.addr2line" 0 >> "$_dloadLog"
 						fi
 					done < "$_dlsymsOut"
-				else
-					rm -f "$_dlsymsOut"
 				fi
 			fi
 
-			cat $uvFolder.add.link >> "$_dloadOut"
+			if [ -s "$uvFolder".add.link ]; then
+				printf "\t%-28s : %s (%d)\n" "user added+dependent libs" "$(readlink "$uvFolder".add.link | sed "s:$PWD/::")" $(wc -l "$uvFolder".add.link | cut -d ' ' -f1) >> "$_dloadLog"
+				cat "$uvFolder".add.link >> "$_dloadOut"
+			fi
 			if [ -s "$_dloadOut" ]; then
 				sort -u "$_dloadOut" -o "$_dloadOut"
 				printf "\t%-28s : %s (%d)\n" "dloaded libs" "$_dloadOut" $(wc -l "$_dloadOut" | cut -d ' ' -f1) >> "$_dloadLog"
@@ -1138,7 +1212,7 @@ function _rootFSDLoadElfAnalyzer()
 			echo "$_elfDLoad" >> "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed
 			((_iter++))
 
-			rm $uvFolder.add.link $uvFolder.del.link
+			rm -f "$uvFolder".add.link "$uvFolder".del.link "$uvFolder/$_elfDLoadP".uv.del.dlink.del
 		done < "$PWD/$rfsDLoadFolder/$_outBase".dlink.dlapi
 
 		sort -u "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed -o "$rfsDLoadFolder/$_outBase".dlink.dlapi.parsed
@@ -1149,7 +1223,13 @@ function _rootFSDLoadElfAnalyzer()
 		rm -f $rfsDLoadFolder/$_outBase.dlink.dlapi.next
 	done
 
+	local _elfP=$(echo $_elf | tr '/' '%')
+	if [ -s "$uvFolder/$_elfP".uv.ldp ]; then
+		cat "$uvFolder/$_elfP".uv.ldp >> "$_dloadOutAll"
+		cat "$uvFolder/$_elfP".uv.ldp >> "$rfsDLoadFolder/$_outBase".dload+dlink.all
+	fi
 	sort -u "$_dloadOutAll" -o "$_dloadOutAll"
+	printf "%-36s : %s (%d)\n" "all dloaded libs" "$_dloadOutAll" $(wc -l "$_dloadOutAll" | cut -d ' ' -f1) >> "$_dloadLog"
 	sort -u "$rfsDLoadFolder/$_outBase".dload+dlink.all -o "$rfsDLoadFolder/$_outBase".dload+dlink.all
 
 	# cleanup

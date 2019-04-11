@@ -403,6 +403,7 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 		cut -f2- "$odTCDFtextFolder/$libdlDefaultP".odTC-DFtext | sort -u -o "$odTCDFtextFolder"/libdlApi
 	fi
 
+	echo "$name: libdl       = $libdlDefault" | tee -a "$name".log
 	echo "$name: dlapi       = $(cat "$odTCDFtextFolder"/libdlApi | tr '\n' ' ')" | tee -a "$name".log
 fi
 
@@ -585,25 +586,18 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 	flsh2lo "$rootFS".files.so.dlapi.all.short "$rootFS".files.so.all "$rootFS".files.so.dlapi.all
 
 	# Dynamically linked shared libraries analysis
-	cat /dev/null > "$rfsDLinkFolder"/dlink.error
 	while read filename
 	do
 		outFile=$(echo "$filename" | tr '/' '%').dlink
 		#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name 
 		# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
 		_rootFSDLinkElfAnalyzer "$rfsFolder" "$filename" "" "$rfsDLinkFolder/$outFile" "" "libdl" "$rdbgFolder" ""
-		if [ -s "$rfsDLinkFolder/$outFile".error ]; then
-			echo "$rfsDLinkFolder/$outFile".error >> "$rfsDLinkFolder"/dlink.error
-		fi	
 	done < "$rootFS".files.elf.analyze.short
 
-	[ ! -s "$rfsDLinkFolder"/dlink.error ] && rm "$rfsDLinkFolder"/dlink.error
 	sort -u "$rfsDLinkFolder"/*.dlink -o "$rootFS".files.so.dlink.short
-	if [ -n "$rdbgFolder" ]; then
-		cat "$odTCDFUNDFolder"/*.dbg-missing 2>/dev/null > "$rfsDLinkFolder"/dlink.dbg-missing
-		rm -f "$odTCDFUNDFolder"/*.dbg-missing
-		[ ! -s "$rfsDLinkFolder"/dlink.dbg-missing ] && rm "$rfsDLinkFolder"/dlink.dbg-missing
-	fi
+
+	#_soRefedByApp $_folder $_elfFileList $_log $_ext
+	_soRefedByApp "$rfsDLinkFolder" "$rootFS".files.so.dlapi.all.short "$rootFS".files.so.dlapi.all.log ".dlink"
 
 	#_soRefedByApp $_folder $_elfFileList $_log $_ext
 	_soRefedByApp "$rfsDLinkFolder" "$rootFS".files.so.dlink.short "$rootFS".files.so.dlink.log ".dlink"
@@ -663,24 +657,13 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 		comm -13 "$rootFS".files.so.dlink.short "$rootFS".files.so.all.short > "$rootFS".files.so.unrefed.short
 		flsh2lo "$rootFS".files.so.unrefed.short "$rootFS".files.so.all "$rootFS".files.so.unrefed
 
-		cat /dev/null > "$rfsDLinkUnrefedSoFolder"/dlink.error
 		while read filename
 		do
 			outFile=$(echo "$filename" | tr '/' '%').dlink
 			#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 			# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
 			_rootFSDLinkElfAnalyzer "$rfsFolder" "$filename" "" "$rfsDLinkUnrefedSoFolder/$outFile" "" "libdl" "$rdbgFolder" ""
-			if [ -s "$rfsDLinkUnrefedSoFolder/$outFile".error ]; then
-				echo "$rfsDLinkUnrefedSoFolder/$outFile".error >> "$rfsDLinkUnrefedSoFolder"/dlink.error
-			fi	
 		done < "$rootFS".files.so.unrefed.short
-
-		[ ! -s "$rfsDLinkUnrefedSoFolder"/dlink.error ] && rm "$rfsDLinkUnrefedSoFolder"/dlink.error
-		if [ -n "$rdbgFolder" ]; then
-			cat "$odTCDFUNDFolder"/*.dbg-missing 2>/dev/null > "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing
-			rm -f "$odTCDFUNDFolder"/*.dbg-missing
-			[ ! -s "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing ] && rm "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing
-		fi
 
 		# Find unrefed shared libraries dynamically linked with libdl directly/indirectly
 		find "$rfsDLinkUnrefedSoFolder" -name "*.dlink.libdl" -size +0 | sed "s:^$rfsDLinkUnrefedSoFolder/::;s:%:/:g;s:\.dlink.libdl::" | sort -o "$rootFS".files.so.unrefed.dlink-libdl.short
@@ -770,6 +753,8 @@ if [ -n "$dlink" ] || [ -n "$nss" ] || [ -n "$dload" ]; then
 		# all libs files containing libdl api calls
 		[ -s "$rootFS".files.so.dlapi.all ] && logFile "$rootFS".files.so.dlapi.all "All libs, dlapi" "$name".log
 	fi
+
+	printf "%-86s : %s\n" "dlapi libs - referenced by applications" "$rootFS".files.so.dlapi.all.log | tee -a $name.log
 fi
 
 if [ -n "$dload" ]; then
@@ -797,9 +782,10 @@ if [ -n "$dload" ]; then
 		ls "$uvFolder"/*.uv.set 2>/dev/null | sed "s:$uvFolder/::;s:.uv.set::;s:%:/:g" | sort -o "$uvFolder".set	#set
 		ls "$uvFolder"/*.uv.add 2>/dev/null | sed "s:$uvFolder/::;s:.uv.add::;s:%:/:g" | sort -o "$uvFolder".add	#add
 		ls "$uvFolder"/*.uv.del 2>/dev/null | sed "s:$uvFolder/::;s:.uv.del::;s:%:/:g" | sort -o "$uvFolder".del	#delete
+		ls "$uvFolder"/*.uv.ldp 2>/dev/null | sed "s:$uvFolder/::;s:.uv.ldp::;s:%:/:g" | sort -o "$uvFolder".ldp	#ld_preload
 		if [ -s "$uvFolder".set ]; then
 			# "$uvFolder"/*.uv.set uv settings completely override those identified by the script:
-			# Remove non libdl api dependent execs from the "$uvFolder".ads execs
+			# Remove non libdl api dependent execs from the "$uvFolder".set execs
 			comm -12 "$rootFS".files.exe.dlink-libdl.dlapi.short "$uvFolder".set > "$uvFolder".exe.set
 			# Extract libdl api libs from "$uvFolder".set
 			comm -12 "$rootFS".files.so.dlapi.all.short "$uvFolder".set > "$uvFolder".so.set
@@ -808,8 +794,6 @@ if [ -n "$dload" ]; then
 			comm -13 <(sort "$uvFolder".exe.set "$uvFolder".so.set) "$uvFolder".set > "$uvFolder".set.no-dlapi-elfs
 			if [ -s "$uvFolder".set.no-dlapi-elfs ]; then
 				echo "$name# Warn  : \"$uvFolder\" folder contains not libdl api dependent elfs! See \"$uvFolder.set.no-dlapi-elfs\"" | tee -a "$name".log
-			else
-				rm "$uvFolder".set.no-dlapi-elfs
 			fi
 		fi
 		if [ -s "$uvFolder".add ] || [ -s "$uvFolder".del ]; then
@@ -819,9 +803,14 @@ if [ -n "$dload" ]; then
 			[ -s "$uvFolder".del ] && cat "$uvFolder".del >> "$uvFolder".ads
 			if [ -s "$uvFolder".ads ]; then
 				sort -u "$uvFolder".ads -o "$uvFolder".ads
+				if [ -n "$exeList" ]; then
+					# Strip off all non $exeList execs from the "$uvFolder".ads
+					comm -12 <(sort "$rootFS".files.exe.dlink-libdl.dlapi.short "$rootFS".files.so.dlapi.all.short) "$uvFolder".ads > "$uvFolder".ads.tmp
+					mv "$uvFolder".ads.tmp "$uvFolder".ads
+				fi
 				# Remove non libdl api dependent execs from the "$uvFolder".ads execs
 				comm -12 "$rootFS".files.exe.dlink-libdl.dlapi.short "$uvFolder".ads > "$uvFolder".exe.ads
-				# Extract libdl api libs from "$uvFolder".set
+				# Extract libdl api libs from "$uvFolder".ads
 				comm -12 "$rootFS".files.so.dlapi.all.short "$uvFolder".ads > "$uvFolder".so.ads
 
 				# validate user input
@@ -829,11 +818,34 @@ if [ -n "$dload" ]; then
 				comm -13 "$uvFolder".elf.ads "$uvFolder".ads > "$uvFolder".ads.no-dlapi-elfs
 				if [ -s "$uvFolder".ads.no-dlapi-elfs ]; then
 					echo "$name# Warn  : \"$uvFolder\" folder contains not libdl api dependent elfs! See \"$uvFolder.ads.no-dlapi-elfs\"" | tee -a "$name".log
-				else
-					rm "$uvFolder".ads.no-dlapi-elfs
 				fi
 
 				mv "$uvFolder".elf.ads "$uvFolder".ads
+			fi
+		fi
+		if [ -s "$uvFolder".ldp ]; then
+			# "$uvFolder"/*.uv.ldp uv settings add LD_PRELOADed libs to execs:
+			# Remove non related execs from the "$uvFolder".ldp
+			comm -12 "$rootFS".files.exe.all.short "$uvFolder".ldp > "$uvFolder".ldp.exe
+			mv "$uvFolder".ldp.exe "$uvFolder".ldp
+
+			# Split "$uvFolder".ldp on libdl api dependent / not libs, if any
+			if [ -s "$uvFolder".ldp ]; then
+				while read exe
+				do
+					exeP=$(echo "$exe" | tr '/' '%')
+					if [ -s $uvFolder/$exeP.uv.ldp ]; then
+						comm -1 "$rootFS".files.so.dlapi.all.short <(sort $uvFolder/$exeP.uv.ldp) | awk -F'\t' -v base="$uvFolder/$exeP".uv.ldp '{\
+						if (NF == 2) {\
+							printf("%s\n", $2) > base".dlapi"
+						} else if (NF == 1) {\
+							printf("%s\n", $1) > base".nodlapi"
+						}\
+						}'
+						[ -s $uvFolder/$exeP.uv.ldp.dlapi ] && sort -u $uvFolder/$exeP.uv.ldp.dlapi -o $uvFolder/$exeP.uv.ldp.dlapi
+						[ -s $uvFolder/$exeP.uv.ldp.nodlapi ] && sort -u $uvFolder/$exeP.uv.ldp.nodlapi -o $uvFolder/$exeP.uv.ldp.nodlapi
+					fi
+				done < "$uvFolder".ldp
 			fi
 		fi
 
@@ -846,10 +858,8 @@ if [ -n "$dload" ]; then
 				if [ -s "$uvFolder.$elf".conflicts ]; then
 					echo "$name# ERROR : \"$uvFolder\" folder contains mutually exclusive uv settings! See \"$uvFolder.$elf.conflicts\". Exit." | tee -a "$name".log
 					# Cleanup
-					find ./ -maxdepth 1 -name "$uvFolder.*" ! -name "$uvFolder.$elf".conflicts -exec rm {} \;
+					find ./ -maxdepth 1 -name "$uvFolder.*" ! -name "$uvFolder.$elf".conflicts -size 0 -exec rm {} \;
 					exit $ERR_OBJ_NOT_VALID
-				else
-					rm "$uvFolder.$elf".conflicts
 				fi
 			fi
 		done
@@ -857,9 +867,10 @@ if [ -n "$dload" ]; then
 		if [ -s "$uvFolder".exe.set ]; then
 			# "$uvFolder"/*.uv.set uv settings completely override those identified by the script:
 			# Remove the "$uvFolder".exe.set execs from the "$rootFS".files.exe.dlink-libdl.dlapi.short
-			comm -23 "$rootFS".files.exe.dlink-libdl.dlapi.short "$uvFolder".exe.set > "$rootFS".files.exe.dlink-libdl.dlapi.uv.short
+			#comm -23 "$rootFS".files.exe.dlink-libdl.dlapi.short "$uvFolder".exe.set > "$rootFS".files.exe.dlink-libdl.dlapi.uv.short
 			# and set a link to the list of dlapi execs to analyze
-			ln -sf "$rootFS".files.exe.dlink-libdl.dlapi.uv.short "$rootFS".files.exe.dlapi.link
+			#ln -sf "$rootFS".files.exe.dlink-libdl.dlapi.uv.short "$rootFS".files.exe.dlapi.link
+			ln -sf "$uvFolder".exe.set "$rootFS".files.exe.dlapi.link
 		fi
 
 		# Cleanup
@@ -868,14 +879,16 @@ if [ -n "$dload" ]; then
 
 	iter=1
 	cat /dev/null > "$rootFS".files.exe.dlink-libdl.dlapi.parsed
-	[ -s "$uvFolder".so.set ] && uvsoset="$uvFolder".so.set || uvsoset=
-	[ -s "$uvFolder".so.ads ] && uvsoads="$uvFolder".so.ads || uvsoads=
+	[ -s "$uvFolder".set ] && uvelfset="$uvFolder".set || uvelfset=
+	[ -s "$uvFolder".ads ] && uvelfads="$uvFolder".ads || uvelfads=
+	[ -s "$uvFolder".ldp ] && uvldp="$uvFolder".ldp || uvldp=
 	while read dlapiExe
 	do
 		printf "%-2d: dlapiExe = %s\n" "$iter" "$dlapiExe" | tee -a "$name".log
 		outFile=$(echo "$dlapiExe" | tr '/' '%')
-		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder : $6 - uv so set : $7 - uv so ads
-		_rootFSDLoadElfAnalyzer "$rfsFolder" "$dlapiExe" $outFile "$wFolderPfx" "$rdbgFolder" "$uvsoset" "$uvsoads"
+		# _rootFSDLoadElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name : $4 - work folder : $5 - rootFS dbg folder 
+		# : $6 - uv so set : $7 - uv so ads : $8 uv ldp exe
+		_rootFSDLoadElfAnalyzer "$rfsFolder" "$dlapiExe" $outFile "$wFolderPfx" "$rdbgFolder" "$uvelfset" "$uvelfads" "$uvldp"
 
 		printf "%s:\n" "$dlapiExe" >> "$rootFS".files.exe.dlink-libdl.dlapi.parsed
 		# log parsed execs along with dependent libdl api libs
@@ -888,10 +901,15 @@ if [ -n "$dload" ]; then
 		((iter++))
 	done < "$rootFS".files.exe.dlapi.link
 
+	# Find and log libdl api dlopen & dlsym methods source code references:
+	find "$odTCDFUNDFolder"/*.usr.dlopen -type f -printf '%p:\n' -exec sed 's:^:\t:' {} \; > "$rootFS".files.elf.dlopen.log
+	find "$odTCDFUNDFolder"/*.usr.dlsym  -type f -printf '%p:\n' -exec sed 's:^:\t:' {} \; > "$rootFS".files.elf.dlsym.log
+	printf "%-86s : %s\n" "libdl dlopen api libs referenced by elfs" "$rootFS".files.elf.dlopen.log | tee -a $name.log
+	printf "%-86s : %s\n" "libdl dlsym  api libs referenced by elfs" "$rootFS".files.elf.dlsym.log | tee -a $name.log
+
 	#Cleanup
 	rm -f "$rfsDLoadFolder"/*.dlink.dlapi.parsed "$rootFS".files.exe.dlapi.link
 	find $rfsSymsFolder -maxdepth 1 -size 0 -exec rm {} \;
-	find $rfsDLoadFolder -maxdepth 1 -size 0 -exec rm {} \;
 fi
 
 if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
@@ -906,11 +924,9 @@ if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
 	printf "%-36s : %5d : %*c : %s\n" "All NSS services" $(wc -l "$rfsNssFolder"/nss.services | cut -d ' ' -f1) 39 " " "$rfsNssFolder"/nss.services | tee -a "$name".log
 	if [ -s "$rfsNssFolder"/nss.short ]; then
 		# Find nss.short library dlink dependencies
-		cat /dev/null > "$rfsNssFolder"/nss.dlink.error
 		#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name
 		# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
 		_rootFSDLinkElfAnalyzer "$rfsFolder" "" "$rfsNssFolder"/nss.short "$rfsNssFolder"/nss.dlink "$rfsNssFolder" "" "$rdbgFolder" ""
-		#[ ! -s ""$rfsNssFolder""/nss.dlink.error ] && rm -f ""$rfsNssFolder""/nss.dlink.error
 		mv "$rfsNssFolder"/nss.dlink "$rfsNssFolder"/nss.dlink.short
 
 		flsh2lo "$rfsNssFolder"/nss.short "$rootFS".files.so.all "$rfsNssFolder"/nss
@@ -926,8 +942,6 @@ if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
 
 	if [ -s "$rfsNssFolder"/nss.not-found ]; then
 		printf "%-36s : %5d : %*c : %s\n" "Not found NSS shared libraries" $(wc -l "$rfsNssFolder"/nss.not-found | cut -d ' ' -f1) 39 " " ""$rfsNssFolder"/nss.not-found" | tee -a "$name".log
-	else
-		rm "$rfsNssFolder"/nss.not-found
 	fi
 
 	if [ -n "$nss" ]; then
@@ -952,72 +966,19 @@ if [ -n "$dlink" ] && [ -n "$nss" ] && [ -n "$dload" ]; then
 	[ -z "$cache" ] && rm -rf "$rfsElfFolder"
 	mkdir -p "$rfsElfFolder"
 
-	# User validation
-	if [ -s "$uvFolder".set ]; then
-		cat /dev/null > "$uvFolder"/dlink.error
-		while read filename
-		do
-			outFile=$(echo "$filename" | tr '/' '%')
-			#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name 
-			# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
-			_rootFSDLinkElfAnalyzer "$rfsFolder" "" "$uvFolder/$outFile".uv.set "$uvFolder/$outFile".uv.set.dlink "" "" "$rdbgFolder" ""
-			if [ -s "$uvFolder/$outFile".error ]; then
-				echo "$uvFolder/$outFile".error >> "$uvFolder"/dlink.error
-			fi	
-		done < "$uvFolder".set
-
-		[ ! -s "$uvFolder"/dlink.error ] && rm "$uvFolder"/dlink.error
-		if [ -n "$rdbgFolder" ]; then
-			cat "$odTCDFUNDFolder"/*.dbg-missing 2>/dev/null > "$uvFolder"/dlink.dbg-missing
-			rm -f "$odTCDFUNDFolder"/*.dbg-missing
-			[ ! -s "$uvFolder"/dlink.dbg-missing ] && rm "$uvFolder"/dlink.dbg-missing
-		fi
-	fi
-	if [ -s "$uvFolder".ads ]; then
-		cat /dev/null > "$uvFolder"/dlink.error
-		while read filename
-		do
-			outFile=$(echo "$filename" | tr '/' '%')
-			cp "$rfsDLoadFolder/$outFile".dload "$uvFolder/$outFile".uv.ads
-			if [ -s "$uvFolder/$outFile".uv.add ]; then
-				sort -u "$uvFolder/$outFile".uv.add "$rfsDLoadFolder/$outFile".dload -o "$uvFolder/$outFile".uv.ads
-			fi
-			if [ -s "$uvFolder/$outFile".uv.del ]; then
-				comm -13 "$uvFolder/$outFile".uv.del "$uvFolder/$outFile".uv.ads > "$uvFolder/$outFile".uv.ads.tmp
-				mv "$uvFolder/$outFile".uv.ads.tmp "$uvFolder/$outFile".uv.ads
-			fi
-
-			if [ -s "$uvFolder/$outFile".uv.ads ]; then
-				#_rootFSDLinkElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name or "" : $3 - "empty" or ELF's refs: $4 - output file name 
-				# : $5 - work folder : $6 - libdl deps : $7 - rootFS dbg folder : $8 - iter log
-				_rootFSDLinkElfAnalyzer "$rfsFolder" "" "$uvFolder/$outFile".uv.ads "$uvFolder/$outFile".uv.ads.dlink "" "" "$rdbgFolder" ""
-				if [ -s "$uvFolder/$outFile".error ]; then
-					echo "$uvFolder/$outFile".error >> "$uvFolder"/dlink.error
-				fi
-			fi
-			rm "$uvFolder/$outFile".uv.ads
-		done < "$uvFolder".ads
-
-		[ ! -s "$uvFolder"/dlink.error ] && rm "$uvFolder"/dlink.error
-		if [ -n "$rdbgFolder" ]; then
-			cat "$odTCDFUNDFolder"/*.dbg-missing 2>/dev/null > "$uvFolder"/dlink.dbg-missing
-			rm -f "$odTCDFUNDFolder"/*.dbg-missing
-			[ ! -s "$uvFolder"/dlink.dbg-missing ] && rm "$uvFolder"/dlink.dbg-missing
-		fi
-	fi
-
 	while read exe
 	do
 		outFile=$(echo "$exe" | tr '/' '%')
 		echo "$exe" > "$rfsElfFolder/$outFile"
 		[ -s "$rfsDLinkFolder/$outFile".dlink ] && cat "$rfsDLinkFolder/$outFile".dlink >> "$rfsElfFolder/$outFile"
-		if [ -n "$uvFolder" ] && [ -s "$uvFolder".set ] && [ -e $uvFolder/$outFile.uv.set.dlink ] ; then
+		if [ -n "$uvFolder" ] && [ -s "$uvFolder".set ] && [ -e "$uvFolder/$outFile".uv.set.dlink ] ; then
 			cat "$uvFolder/$outFile".uv.set.dlink >> "$rfsElfFolder/$outFile"
-		elif [ -n "$uvFolder" ] && [ -s "$uvFolder".ads ] && [ -e $uvFolder/$outFile.uv.ads.dlink ] ; then
+		elif [ -n "$uvFolder" ] && [ -s "$uvFolder".ads ] && [ -e "$uvFolder/$outFile".uv.ads.dlink ] ; then
 			cat "$uvFolder/$outFile".uv.ads.dlink >> "$rfsElfFolder/$outFile"
-		elif [ -s "$rfsDLoadFolder/$outFile".dload+dlink.all ]; then
-			cat "$rfsDLoadFolder/$outFile".dload+dlink.all >> "$rfsElfFolder/$outFile"
 		fi
+		[ -s "$uvFolder/$outFile".uv.ldp.nodlapi.nodlapi ] && cat "$uvFolder/$outFile".uv.ldp.nodlapi.nodlapi >> "$rfsElfFolder/$outFile"
+		
+		[ -s "$rfsDLoadFolder/$outFile".dload+dlink.all ] && cat "$rfsDLoadFolder/$outFile".dload+dlink.all >> "$rfsElfFolder/$outFile"
 		[ -s "$rfsNssFolder/$outFile".nss ] && cat "$rfsNssFolder/$outFile".nss >> "$rfsElfFolder/$outFile"
 		[ -s "$rfsNssFolder/$outFile".nss.dlink ] && cat "$rfsNssFolder/$outFile".nss.dlink >> "$rfsElfFolder/$outFile"
 
@@ -1043,7 +1004,10 @@ if [ -n "$dlink" ] && [ -n "$nss" ] && [ -n "$dload" ]; then
 	printf "%-86s : %s\n" "dlink+dload+nss shared libraries referenced by applications" "$rootFS".files.so.dlink+dload+nss.log | tee -a $name.log
 
 	#Cleanup
-	[ -n "$uvFolder" ] && rm -f "$uvFolder".* 
+	if [ -n "$uvFolder" ]; then
+		find "$uvFolder" -type f \( -name "*.dlink" -o -name "*.uv.ldp.*" \) -exec rm {} \;
+		find ./ -maxdepth 1 -type f -name "$uvFolder.*" ! -name "$uvFolder".ads.no-dlapi-elfs -exec rm {} \;
+	fi
 	rm "$rootFS".files.elf.dlink+dload+nss.short
 fi
 
@@ -1073,16 +1037,34 @@ if [[ -n "$rtValidation" || -n "$usedFiles" ]] && [ -n "$dlink" ] && [ -n "$nss"
 		cat /dev/null > "$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
 		if [ -n "$rtValidation" ]; then
 			# reevaluation of the "$rootFS".files.so.dlink+dload+nss.unrefed
-			if [ $(ls "$rootFS".run-time/"$rootFS".rt-validation/*.not-validated 2>/dev/null | wc -l) -gt 0 ] && [ -s "$rootFS".run-time/"$rootFS".$fme_elf_rt_used ]; then
-				comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short \
-					<(sort -u "$rootFS".run-time/"$rootFS".rt-validation/*.not-validated "$rootFS".run-time/"$rootFS".$fme_elf_rt_used) > \
-					"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
-			elif [ -s "$rootFS".run-time/"$rootFS".$fme_elf_rt_used ]; then
-				comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short "$rootFS".run-time/"$rootFS".$fme_elf_rt_used > \
-					"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+			if [ -n "$ppmList" ]; then
+				if [ "${ppmlOpts#*t}" != "$ppmlOpts" ]; then
+					if [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_analyze_not_validated ] && [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_elf_rt_used ]; then
+						comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short \
+						<(sort -u "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_analyze_not_validated "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_elf_rt_used) > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+					elif [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_elf_rt_used ]; then
+						comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_elf_rt_used > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+					elif [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_analyze_not_validated ]; then
+						comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_analyze_not_validated > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+					fi
+				fi
 			else
-				comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short <(sort -u "$rootFS".run-time/"$rootFS".rt-validation/*.not-validated) > \
-					"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+				ls "$rootFS".run-time/"$rootFS".rt-validation/*.not-validated 2>/dev/null | sort -u -o "$rootFS".run-time/"$rootFS".rt-validation.not-validated
+				if [ -s "$rootFS".run-time/"$rootFS".rt-validation.not-validated ] && [ -s "$rootFS".run-time/"$rootFS".$fme_elf_rt_used ]; then
+					comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short \
+						<(sort -u "$rootFS".run-time/"$rootFS".rt-validation.not-validated "$rootFS".run-time/"$rootFS".$fme_elf_rt_used) > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+				elif [ -s "$rootFS".run-time/"$rootFS".$fme_elf_rt_used ]; then
+					comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short "$rootFS".run-time/"$rootFS".$fme_elf_rt_used > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+				elif [ -s "$rootFS".run-time/"$rootFS".rt-validation.not-validated ]; then
+					comm -23 "$rootFS".files.so.dlink+dload+nss.unrefed.short "$rootFS".run-time/"$rootFS".rt-validation.not-validated > \
+						"$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short
+				fi
+				rm "$rootFS".run-time/"$rootFS".rt-validation.not-validated
 			fi
 		fi
 		if [ -n "$usedFiles" ]; then
@@ -1101,10 +1083,10 @@ if [[ -n "$rtValidation" || -n "$usedFiles" ]] && [ -n "$dlink" ] && [ -n "$nss"
 			if [ -z "$ppmList" ] && [ -s "$rootFS".run-time/"$rootFS".$fme_so_rt_used ]; then
 				ln -sf "$rootFS".run-time/"$rootFS".$fme_so_rt_used "$rootFS".$fme_so_rt_used
 			elif [ -n "$ppmList" ]; then
-				if [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".$fme_so_rt_used ]; then
-					ln -sf "$rootFS".run-time/"$rootFS".total/"$rootFS".$fme_so_rt_used "$rootFS".$fme_so_rt_used
-				elif [ -s "$rootFS".run-time/"$rootFS".common/"$rootFS".$fme_so_rt_used ]; then
-					ln -sf "$rootFS".run-time/"$rootFS".common/"$rootFS".$fme_so_rt_used "$rootFS".$fme_so_rt_used
+				if [ -s "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_so_rt_used ]; then
+					ln -sf "$rootFS".run-time/"$rootFS".total/"$rootFS".total.$fme_so_rt_used "$rootFS".$fme_so_rt_used
+				elif [ -s "$rootFS".run-time/"$rootFS".common/"$rootFS".common.$fme_so_rt_used ]; then
+					ln -sf "$rootFS".run-time/"$rootFS".common/"$rootFS".common.$fme_so_rt_used "$rootFS".$fme_so_rt_used
 				fi
 			fi
 			if [ -s "$rootFS".$fme_so_rt_used ]; then
@@ -1124,26 +1106,31 @@ if [[ -n "$rtValidation" || -n "$usedFiles" ]] && [ -n "$dlink" ] && [ -n "$nss"
 	rm -f "$rootFS".maps.list
 fi
 
-if [ -s "$rfsDLinkFolder"/dlink.error ]; then
-	echo "$name # Warn      : Unresolved reference(s) present! See "$rfsDLinkFolder"/dlink.error" | tee -a "$name".log
-fi	
+find "$rfsSymsFolder" -maxdepth 1 -name "*.str-so.dlink.error" -exec cat > "$rootFS".files.elf.str-so.dlink.not-found {} \; -exec rm {} \;
+if [ -s "$rootFS".files.elf.str-so.dlink.not-found ]; then
+	echo "$name # FYI       : ELF files with unresolved str-so reference(s) found! See $rootFS.files.elf.str-so.dlink.not-found" | tee -a "$name".log
+fi
+
+find ./ -maxdepth 2 -name "*.dlink.error" ! -name "$rootFS".files.elf.dlink.error ! -name "$rootFS".files.elf.str-so.dlink.error -exec cat > "$rootFS".files.elf.dlink.error {} \; -exec rm {} \;
+if [ -s "$rootFS".files.elf.dlink.error ]; then
+	echo "$name # Warn      : Unresolved reference(s) found! See $rootFS.files.elf.dlink.error" | tee -a "$name".log
+fi
 
 if [ -n "$rdbgFolder" ]; then
 	cat /dev/null > "$rootFS".files.elf.dbg-missing
-	[ -s "$rfsDLinkFolder"/dlink.dbg-missing ] && cat "$rfsDLinkFolder"/dlink.dbg-missing >> "$rootFS".files.elf.dbg-missing
-	[ -s "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing ] && cat "$rfsDLinkUnrefedSoFolder"/dlink.dbg-missing >> "$rootFS".files.elf.dbg-missing
+	find ./ -maxdepth 2 -name "*.dbg-missing" ! -name "$rootFS".files.elf.dbg-missing -exec cat >> "$rootFS".files.elf.dbg-missing {} \; -exec rm {} \;
 
 	if [ -s "$rootFS".files.elf.dbg-missing ]; then
 		sed -i "s:$rdbgFolder::;s:.debug::;s:\(/\)\1\+:\1:g" "$rootFS".files.elf.dbg-missing
 		sort -u "$rootFS".files.elf.dbg-missing -o "$rootFS".files.elf.dbg-missing
-		echo "$name # Warn      : ELF files with missing symbolic/dbg info! See $rootFS.files.elf.dbg-missing" | tee -a "$name".log
-	else
-		rm "$rootFS".files.elf.dbg-missing
+		echo "$name # Warn      : ELF files with missing symbolic/dbg info found! See $rootFS.files.elf.dbg-missing" | tee -a "$name".log
 	fi
 fi
 
 # Cleanup
-find $odTCDFUNDFolder $odTCDFtextFolder -maxdepth 1 -size 0 -exec rm {} \;
+[ -n "$dload" ] && find "$rfsDLoadFolder" -maxdepth 1 -size 0 -exec rm {} \;
+[ -n "$uvFolder" ] && find "$uvFolder" -maxdepth 1 -size 0 -exec rm {} \;
+find ./ "$odTCDFUNDFolder" "$odTCDFtextFolder" -maxdepth 1 -size 0 -exec rm {} \;
 find ./ \( -name "*.str-symb" -o -name "*.libdl.user*" -o -name "*.dC" \) -exec rm {} \;
 
 rm -f "$rootFS".files.so.dlink.short "$rootFS".files.so.unrefed.short
