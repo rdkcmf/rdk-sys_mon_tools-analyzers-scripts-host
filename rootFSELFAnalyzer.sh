@@ -949,10 +949,33 @@ if [ -e "$rfsFolder"/etc/nsswitch.conf ]; then
 		while read exe
 		do
 			#printf "%-2d: exe = %s\n" "$iter" "$exe"
-			outFile=$(echo "$exe" | tr '/' '%')
-			_rootFSNssElfAnalyzer "$rfsFolder" "$exe" "$rfsNssFolder/$outFile" "$rdbgFolder"
+			exeP=$(echo "$exe" | tr '/' '%')
+			# _rootFSNssElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name base : $4 - rdbg folder : $5 - list of ELFs : $6 - list of DL ELFs
+			_rootFSNssElfAnalyzer "$rfsFolder" "$exe" "$rfsNssFolder/$exeP" "$rdbgFolder" "" ""
 			#((iter++))
 		done < "$rootFS".files.elf.analyze.short
+
+		if [ -n "$uvFolder" ]; then
+			while read exe
+			do
+				exeP=$(echo "$exe" | tr '/' '%')
+				[ ! -s "$rfsDLoadFolder/$exeP".dload.all ] && continue
+				# Skip NSS analysis if all NSS based files are already part of the executable $exe
+				[ -z "$(comm -13 "$rfsNssFolder/$exeP".nss "$rfsNssFolder"/nss.short)" ] && continue
+
+				# Skip NSS analysis if an executable doesn't have any dloaded and user validated added files
+				[ ! -s "$rfsDLoadFolder/$exeP".dload+dlink.all ] && continue
+				# Skip NSS analysis for already analyzed dlink files
+				comm -23 "$rfsDLoadFolder/$exeP".dload+dlink.all "$rfsDLinkFolder/$exeP".dlink > "$rfsNssFolder/$exeP".uvdl
+				# Skip NSS analysis if there is nothing to analyze
+				[ ! -s "$rfsNssFolder/$exeP".uvdl ] && continue
+
+				# Do NSS analysis of dloaded and user validated added files & their dlink deps for an executable $exe
+				# _rootFSNssElfAnalyzer : $1 - rootFS folder : $2 - target ELF file name : $3 - output file name base : $4 - rdbg folder : $5 - list of ELFs : $6 - list of DL ELFs
+				_rootFSNssElfAnalyzer "$rfsFolder" "" "$rfsNssFolder/$exeP".uvdl "$rdbgFolder" "" "$rfsNssFolder/$exeP".uvdl
+
+			done < "$rootFS".files.elf.analyze.short
+		fi
 	fi
 
 	# Cleanup
@@ -968,21 +991,27 @@ if [ -n "$dlink" ] && [ -n "$nss" ] && [ -n "$dload" ]; then
 
 	while read exe
 	do
-		outFile=$(echo "$exe" | tr '/' '%')
-		echo "$exe" > "$rfsElfFolder/$outFile"
-		[ -s "$rfsDLinkFolder/$outFile".dlink ] && cat "$rfsDLinkFolder/$outFile".dlink >> "$rfsElfFolder/$outFile"
-		if [ -n "$uvFolder" ] && [ -s "$uvFolder".set ] && [ -e "$uvFolder/$outFile".uv.set.dlink ] ; then
-			cat "$uvFolder/$outFile".uv.set.dlink >> "$rfsElfFolder/$outFile"
-		elif [ -n "$uvFolder" ] && [ -s "$uvFolder".ads ] && [ -e "$uvFolder/$outFile".uv.ads.dlink ] ; then
-			cat "$uvFolder/$outFile".uv.ads.dlink >> "$rfsElfFolder/$outFile"
+		exeP=$(echo "$exe" | tr '/' '%')
+		echo "$exe" > "$rfsElfFolder/$exeP"
+		[ -s "$rfsDLinkFolder/$exeP".dlink ] && cat "$rfsDLinkFolder/$exeP".dlink >> "$rfsElfFolder/$exeP"
+		if [ -n "$uvFolder" ]; then
+			if [ -s "$uvFolder".set ] && [ -e "$uvFolder/$exeP".uv.set.dlink ] ; then
+				cat "$uvFolder/$exeP".uv.set.dlink >> "$rfsElfFolder/$exeP"
+			elif [ -s "$uvFolder".ads ] && [ -e "$uvFolder/$exeP".uv.ads.dlink ] ; then
+				cat "$uvFolder/$exeP".uv.ads.dlink >> "$rfsElfFolder/$exeP"
+			fi
+			[ -s "$uvFolder/$exeP".uv.ldp.nodlapi.nodlapi ] && cat "$uvFolder/$exeP".uv.ldp.nodlapi.nodlapi >> "$rfsElfFolder/$exeP"
+			[ -s "$rfsNssFolder/$exeP".uvdl.nss ] && cat "$rfsNssFolder/$exeP".uvdl.nss >> "$rfsElfFolder/$exeP"
+			[ -s "$rfsNssFolder/$exeP".uvdl.nss.dlink ] && cat "$rfsNssFolder/$exeP".uvdl.nss.dlink >> "$rfsElfFolder/$exeP"
 		fi
-		[ -s "$uvFolder/$outFile".uv.ldp.nodlapi.nodlapi ] && cat "$uvFolder/$outFile".uv.ldp.nodlapi.nodlapi >> "$rfsElfFolder/$outFile"
 		
-		[ -s "$rfsDLoadFolder/$outFile".dload+dlink.all ] && cat "$rfsDLoadFolder/$outFile".dload+dlink.all >> "$rfsElfFolder/$outFile"
-		[ -s "$rfsNssFolder/$outFile".nss ] && cat "$rfsNssFolder/$outFile".nss >> "$rfsElfFolder/$outFile"
-		[ -s "$rfsNssFolder/$outFile".nss.dlink ] && cat "$rfsNssFolder/$outFile".nss.dlink >> "$rfsElfFolder/$outFile"
+		if [ -s "$rfsDLoadFolder/$exeP".dload+dlink.all ]; then 
+			cat "$rfsDLoadFolder/$exeP".dload+dlink.all >> "$rfsElfFolder/$exeP"
+		fi
+		[ -s "$rfsNssFolder/$exeP".nss ] && cat "$rfsNssFolder/$exeP".nss >> "$rfsElfFolder/$exeP"
+		[ -s "$rfsNssFolder/$exeP".nss.dlink ] && cat "$rfsNssFolder/$exeP".nss.dlink >> "$rfsElfFolder/$exeP"
 
-		sort -u "$rfsElfFolder/$outFile" -o "$rfsElfFolder/$outFile"
+		sort -u "$rfsElfFolder/$exeP" -o "$rfsElfFolder/$exeP"
 	done < "$rootFS".files.elf.analyze.short
 
 	sort -u "$rfsElfFolder"/* -o "$rootFS".files.elf.dlink+dload+nss.short
@@ -1099,7 +1128,7 @@ if [[ -n "$rtValidation" || -n "$usedFiles" ]] && [ -n "$dlink" ] && [ -n "$nss"
 			rm -f "$rootFS".files.so.dlink+dload+nss.unrefed.reevaluated.short "$rootFS".files.so.unrefed.missed.short
 		fi
 	else
-		rm "$procs" "$procs".analyze
+		rm -f "$procs" "$procs".analyze
 	fi
 
 	# Cleanup
